@@ -71,22 +71,44 @@ class CircularAssembly:
 
 
 def downsample(reads: list[str], target_depth: float, expected_bp: int) -> list[str]:
-    """Keep roughly enough reads for the depth asked for, longest first.
+    """Keep roughly enough reads for the depth asked for.
 
-    Longest first because a long read spans more of a repeat, and the repeats
-    inside the rDNA circle are the hard part of this particular assembly.
+    Longer reads are preferred, because a long read spans more of a repeat and
+    the repeats inside the rDNA circle are the hard part of this assembly.
+
+    But not without a limit, and the limit matters. A read longer than the
+    element itself has gone right round the circle and started again, so it
+    describes the same place twice. The layout here works in straight line
+    coordinates, so such a read pulls the walk in two directions at once.
+
+    On the real mitochondrial reads this was not a hypothetical. Asking for
+    sixty fold coverage of a fifty kilobase element picked the fifty seven
+    longest reads available, which ran from 34 kb to 84 kb with a median of
+    38 kb. Three of them were longer than the whole element. The walk took a
+    wrong turn and produced a 61 kb circle instead of a 49 kb one, and nothing
+    about the result looked wrong from the inside.
+
+    So reads that cannot wrap are used first, and the ones that can are only
+    brought in if there are not enough of the others.
     """
     if expected_bp <= 0:
         return list(reads)
+
     budget = target_depth * expected_bp
-    order = sorted(range(len(reads)), key=lambda i: len(reads[i]), reverse=True)
+    # A little under the element size, so a read cannot quite go round.
+    wrap_limit = int(expected_bp * 0.9)
+    safe = sorted(
+        (r for r in reads if len(r) <= wrap_limit), key=len, reverse=True
+    )
+    rest = sorted((r for r in reads if len(r) > wrap_limit), key=len, reverse=True)
+
     kept: list[str] = []
     total = 0
-    for i in order:
+    for read in safe + rest:
         if total >= budget:
             break
-        kept.append(reads[i])
-        total += len(reads[i])
+        kept.append(read)
+        total += len(read)
     return kept
 
 
@@ -249,6 +271,8 @@ def _build_layout(
     min_anchors: int,
     min_shared: int,
     max_span: int,
+    n_seeds: int = 11,
+    tolerance: float = 0.05,
 ) -> tuple[list[Placement], int]:
     """Lay the reads out on one coordinate line.
 
@@ -266,21 +290,47 @@ def _build_layout(
     with, and a vote taken over three hundred reads is worth a great deal more
     than one taken over the dozen that happened to form the chain.
 
+    ## Why the walk is run more than once
+
+    A greedy walk takes the longest step available at each point and never looks
+    back, so one bad overlap sends it on a detour it cannot undo. On the real
+    mitochondrial reads this happened for some sets of reads and not others. Ten
+    settings out of twelve gave a circle of about 49 kb, matching the published
+    genome, and two gave 60 kb, because the walk went down a wrong turn and came
+    back round the long way.
+
+    Nothing about the 60 kb answer looks wrong from the inside. It closes into a
+    circle, the reads agree with each other along it, and the coverage is even.
+
+    Five starting points turned out not to be enough on that data and eleven
+    was, so the walk is run from several different starting reads and the
+    lengths are compared. Agreement between walks that set out from different places is
+    worth much more than any single walk's confidence in itself, and a wrong
+    turn is usually particular to one starting point. The answer kept is the one
+    the most walks agree on, and ties go to whichever used the most reads.
+
     Returns the layout and the circle length, which is zero for a line.
     """
     graph = _overlap_graph(reads, k, w, min_entropy, min_anchors, min_shared)
     if not graph:
         return [], 0
 
-    seed = max(graph, key=lambda r: sum(n[3] for n in graph[r]))
-    visited = {seed}
-    backbone = [Placement(seed, 0, True, 0)]
+    support = {r: sum(n[3] for n in graph[r]) for r in graph}
+    seeds = sorted(support, key=lambda r: support[r], reverse=True)[: max(1, n_seeds)]
 
-    right, circumference = _walk(seed, reads, graph, True, visited, max_span, k)
-    backbone += right
-    if not circumference:
-        left, _ = _walk(seed, reads, graph, False, visited, max_span, k)
-        backbone += left
+    attempts: list[tuple[int, list[Placement], set[int]]] = []
+    for seed in seeds:
+        visited = {seed}
+        backbone = [Placement(seed, 0, True, 0)]
+        right, circumference = _walk(seed, reads, graph, True, visited, max_span, k)
+        backbone += right
+        if not circumference:
+            left, _ = _walk(seed, reads, graph, False, visited, max_span, k)
+            backbone += left
+        attempts.append((circumference, backbone, visited))
+
+    best = _agree_on_an_attempt(attempts, tolerance)
+    circumference, backbone, _ = best
 
     placed = {p.read_index: p for p in backbone}
 
@@ -317,6 +367,41 @@ def _build_layout(
     for p in layout:
         p.offset -= base
     return layout, circumference
+
+
+def _agree_on_an_attempt(
+    attempts: list[tuple[int, list[Placement], set[int]]], tolerance: float
+) -> tuple[int, list[Placement], set[int]]:
+    """Pick the walk that the most other walks agree with.
+
+    Two walks agree when their circle lengths are within `tolerance` of each
+    other. The biggest group of agreeing walks wins, and within that group we
+    keep the walk that used the most reads.
+
+    Walks that did not close are only considered when no walk closed at all. A
+    circle that closed is a much stronger statement than a line that simply ran
+    out of reads, so one closed walk beats any number of open ones.
+    """
+    closed = [a for a in attempts if a[0] > 0]
+    pool = closed or attempts
+    if not pool:
+        return 0, [], set()
+    if len(pool) == 1:
+        return pool[0]
+
+    best: tuple[int, int, tuple] | None = None  # votes, reads, attempt
+    for attempt in pool:
+        length = attempt[0]
+        if length > 0:
+            votes = sum(
+                1 for other in pool if abs(other[0] - length) <= tolerance * length
+            )
+        else:
+            votes = sum(1 for other in pool if other[0] == 0)
+        key = (votes, len(attempt[1]))
+        if best is None or key > (best[0], best[1]):
+            best = (votes, len(attempt[1]), attempt)
+    return best[2]
 
 
 def _stitch(reads: list[str], layout: list[Placement], circumference: int = 0) -> str:
@@ -468,6 +553,7 @@ def assemble_circle(
     min_shared: int = 3,
     rotate: bool = True,
     vote: bool | None = None,
+    n_seeds: int = 11,
 ) -> CircularAssembly:
     """Assemble one high copy compartment and try to close it into a circle.
 
@@ -502,7 +588,7 @@ def assemble_circle(
     # on.
     max_span = max(expected_bp * 4, 200_000) if expected_bp else 2_000_000
     layout, circumference = _build_layout(
-        kept, k, w, min_entropy, min_anchors, min_shared, max_span
+        kept, k, w, min_entropy, min_anchors, min_shared, max_span, n_seeds=n_seeds
     )
 
     if not layout:

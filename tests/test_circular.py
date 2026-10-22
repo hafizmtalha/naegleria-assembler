@@ -185,11 +185,28 @@ def test_rotation_leaves_a_very_short_sequence_alone():
     assert rotate_to_canonical_start("ACGT", k=16) == "ACGT"
 
 
-def test_downsampling_keeps_the_longest_reads_and_hits_the_budget():
-    reads = [f"{'A' * n}" for n in (100, 5_000, 300, 4_000, 200)]
+def test_downsampling_prefers_long_reads_that_cannot_wrap_the_element():
+    # For a 4 kb element, a 5 kb read has gone right round and started again, so
+    # it describes the same place twice and pulls the layout in two directions.
+    # Reads that cannot wrap are taken first, longest of those first.
+    reads = ["A" * n for n in (100, 5_000, 300, 3_000, 200)]
     kept = downsample(reads, target_depth=2, expected_bp=4_000)
-    assert len(kept[0]) == 5_000
-    assert sum(len(r) for r in kept) >= 8_000
+    assert len(kept[0]) == 3_000, "the longest read that cannot wrap should come first"
+    assert kept.index("A" * 5_000) > 0, "the wrapping read should not be chosen first"
+
+
+def test_downsampling_falls_back_to_wrapping_reads_when_there_is_nothing_else():
+    # If every read is longer than the element, we still have to use them.
+    reads = ["A" * 9_000, "A" * 8_000]
+    kept = downsample(reads, target_depth=5, expected_bp=1_000)
+    assert kept, "something must come back rather than nothing"
+
+
+def test_downsampling_stops_once_the_budget_is_met():
+    reads = ["A" * 1_000 for _ in range(100)]
+    kept = downsample(reads, target_depth=10, expected_bp=2_000)
+    # 10 fold coverage of 2 kb is 20 kb, which is twenty reads of a kilobase.
+    assert 15 <= len(kept) <= 25
 
 
 def test_downsampling_with_no_expected_size_keeps_everything():
