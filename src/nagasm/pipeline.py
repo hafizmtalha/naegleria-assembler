@@ -41,6 +41,10 @@ class Settings:
     circle_depth: float = 60.0
     circle_k: int = 15
     max_elements: int = 4
+    # Reads this many times deeper than the nuclear peak are assembled on their
+    # own even when they never formed a hump. See
+    # TriageResult.deep_outlier_indices for why this is needed.
+    deep_outlier_factor: float = 4.0
     skip_nuclear: bool = False
     skip_polish: bool = False
 
@@ -140,53 +144,108 @@ def run(
             continue
 
         log(f"Assembling {comp.label} ({len(comp_reads):,} reads).")
-        asm = circular.assemble_circle(
+        # A compartment can hold more than one molecule, so keep going until
+        # nothing more comes out rather than stopping at the first element.
+        assemblies = circular.assemble_elements(
             comp_reads,
             expected_bp=comp.span_bp,
+            max_elements=settings.max_elements,
             target_depth=settings.circle_depth,
             k=settings.circle_k,
         )
-        if not asm.sequence:
+        if not assemblies:
             log(f"  {comp.label}: nothing assembled")
-            for note in asm.notes:
-                log(f"    {note}")
             continue
 
-        sequence = asm.sequence
-        if not settings.skip_polish and polish_mod.have("minimap2") and polish_mod.have("racon"):
-            log(f"  polishing {comp.label} ({len(sequence):,} bp).")
-            polished = polish_mod.polish(
-                sequence,
-                comp_reads,
-                read_type=settings.read_type,
-                rounds=settings.polish_rounds,
-                threads=settings.threads,
-                circular=asm.is_circular,
-                workdir=outdir / "work" / f"polish_{comp.label}",
-            )
-            sequence = polished.sequence
-            asm.notes.extend(polished.notes)
-            if asm.is_circular:
-                sequence = circular.rotate_to_canonical_start(sequence)
+        for part, asm in enumerate(assemblies, start=1):
+            sequence = asm.sequence
+            if not settings.skip_polish and polish_mod.have("minimap2") and polish_mod.have("racon"):
+                log(f"  polishing {comp.label} part {part} ({len(sequence):,} bp).")
+                polished = polish_mod.polish(
+                    sequence,
+                    comp_reads,
+                    read_type=settings.read_type,
+                    rounds=settings.polish_rounds,
+                    threads=settings.threads,
+                    circular=asm.is_circular,
+                    workdir=outdir / "work" / f"polish_{comp.label}_{part}",
+                )
+                sequence = polished.sequence
+                asm.notes.extend(polished.notes)
+                if asm.is_circular:
+                    sequence = circular.rotate_to_canonical_start(sequence)
 
-        name = f"{comp.label}_{'circular' if asm.is_circular else 'linear'}"
-        element_records.append(Record(name, sequence))
-        elements.append(
-            {
-                "name": name,
-                "compartment": comp.label,
-                "length": len(sequence),
-                "is_circular": asm.is_circular,
-                "mean_coverage": round(asm.mean_coverage, 1),
-                "reads_used": asm.n_reads_used,
-                "notes": asm.notes,
-                "resolvability": circular.resolvability_note(sequence, comp_reads),
-            }
-        )
+            suffix = "circular" if asm.is_circular else "linear"
+            name = f"{comp.label}_{part}_{suffix}"
+            element_records.append(Record(name, sequence))
+            elements.append(
+                {
+                    "name": name,
+                    "compartment": comp.label,
+                    "length": len(sequence),
+                    "is_circular": asm.is_circular,
+                    "mean_coverage": round(asm.mean_coverage, 1),
+                    "reads_used": asm.n_reads_used,
+                    "notes": asm.notes,
+                    "resolvability": circular.resolvability_note(sequence, comp_reads),
+                }
+            )
+            log(
+                f"  {name}: {len(sequence):,} bp, "
+                f"{'closed into a circle' if asm.is_circular else 'left as a line'}"
+            )
+
+    # Elements hiding in the tail above the nuclear peak, with no hump of their
+    # own. On Naegleria this is where the rDNA circle usually is.
+    outlier_idx = triage_result.deep_outlier_indices(settings.deep_outlier_factor)
+    if len(outlier_idx) >= 30:
+        outlier_reads = [triage_reads[i] for i in outlier_idx]
         log(
-            f"  {name}: {len(sequence):,} bp, "
-            f"{'closed into a circle' if asm.is_circular else 'left as a line'}"
+            f"Looking for elements among the {len(outlier_reads):,} reads more than "
+            f"{settings.deep_outlier_factor:.0f} times deeper than the nuclear peak."
         )
+        for n, asm in enumerate(
+            circular.assemble_elements(
+                outlier_reads,
+                expected_bp=0,
+                max_elements=settings.max_elements,
+                target_depth=settings.circle_depth,
+                k=settings.circle_k,
+            ),
+            start=1,
+        ):
+            if not asm.is_circular:
+                # Nuclear repeats make up most of this set and they come out as
+                # lines. Only the circles are worth reporting as elements.
+                continue
+            sequence = asm.sequence
+            if not settings.skip_polish and polish_mod.have("minimap2") and polish_mod.have("racon"):
+                polished = polish_mod.polish(
+                    sequence,
+                    outlier_reads,
+                    read_type=settings.read_type,
+                    rounds=settings.polish_rounds,
+                    threads=settings.threads,
+                    circular=True,
+                    workdir=outdir / "work" / f"polish_deep_{n}",
+                )
+                sequence = circular.rotate_to_canonical_start(polished.sequence)
+                asm.notes.extend(polished.notes)
+            name = f"deep_element_{n}_circular"
+            element_records.append(Record(name, sequence))
+            elements.append(
+                {
+                    "name": name,
+                    "compartment": "above the nuclear peak, no hump of its own",
+                    "length": len(sequence),
+                    "is_circular": True,
+                    "mean_coverage": round(asm.mean_coverage, 1),
+                    "reads_used": asm.n_reads_used,
+                    "notes": asm.notes,
+                    "resolvability": circular.resolvability_note(sequence, outlier_reads),
+                }
+            )
+            log(f"  {name}: {len(sequence):,} bp, closed into a circle")
 
     payload["elements"] = elements
     if element_records:

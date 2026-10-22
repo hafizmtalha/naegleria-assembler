@@ -100,6 +100,7 @@ def polish(
     threads: int = 4,
     circular: bool = False,
     workdir: Path | None = None,
+    max_depth: float = 100.0,
 ) -> PolishResult:
     """Polish a draft with racon, mapping the reads back with minimap2.
 
@@ -108,6 +109,13 @@ def polish(
 
     Two rounds is the usual advice. The second picks up places the first one's
     changes made mappable, and a third rarely earns its time.
+
+    `max_depth` caps how many reads are used. A consensus taken over a hundred
+    reads at each position is not improved by taking it over two thousand, and
+    the cost is the other way round entirely. On a high copy element this is the
+    difference between a polish that takes seconds and one that takes an hour,
+    because these compartments can hold tens of thousands of reads for an
+    element of a few tens of kilobases.
     """
     require("minimap2", "racon")
     notes: list[str] = []
@@ -125,8 +133,26 @@ def polish(
     tmp = Path(workdir) if workdir else Path(tempfile.mkdtemp(prefix="nagasm_polish_"))
     tmp.mkdir(parents=True, exist_ok=True)
 
+    used = reads
+    if max_depth > 0 and draft:
+        budget = max_depth * len(draft)
+        total = 0
+        capped: list[str] = []
+        # Longest first, so the cap keeps the reads that carry the most information.
+        for read in sorted(reads, key=len, reverse=True):
+            if total >= budget:
+                break
+            capped.append(read)
+            total += len(read)
+        if len(capped) < len(reads):
+            notes.append(
+                f"polished with {len(capped):,} of {len(reads):,} reads, which is "
+                f"about {max_depth:.0f} fold coverage of the draft"
+            )
+            used = capped
+
     reads_path = tmp / "reads.fastq"
-    write_fastq(reads_path, [Record(f"read{i}", r) for i, r in enumerate(reads)])
+    write_fastq(reads_path, [Record(f"read{i}", r) for i, r in enumerate(used)])
 
     preset = _preset_for(read_type)
     current = working

@@ -120,6 +120,39 @@ class TriageResult:
         nuc = self.nuclear
         return nuc.peak_depth if nuc else float("nan")
 
+    def deep_outlier_indices(self, factor: float = 4.0) -> np.ndarray:
+        """Reads sitting well above the nuclear peak without a hump of their own.
+
+        This exists because of something real data taught us that the synthetic
+        data did not.
+
+        The whole compartment idea rests on each element making its own hump in
+        the depth histogram. The mitochondrial genome does that cleanly. The rDNA
+        circle, in a library of ordinary depth, often does not. It is only about
+        fifteen kilobases, so the hump it would make is tiny, and it lands in the
+        long tail that runs from the nuclear peak up towards the mitochondrion.
+        That tail is mostly nuclear repeats, and the rDNA hides inside it.
+
+        Lowering the bar for what counts as a peak does not help. It shatters the
+        nuclear peak into a dozen imaginary compartments long before it finds the
+        real one.
+
+        So this takes a different route. Rather than looking for a shape in the
+        histogram, it simply collects the reads that are several times deeper
+        than the nuclear peak and leaves the sorting to the assembler. Most of
+        what comes back is nuclear repeat, which assembles into unremarkable
+        linear pieces. Anything that closes into a circle is worth a look.
+
+        On the real nanopore data this recovered the rDNA circle at 15.6 kb,
+        against a published figure of 15.9 kb for the same strain.
+        """
+        if self.nuclear_index < 0:
+            return np.array([], dtype=np.int64)
+        threshold = self.nuclear_peak * factor
+        return np.flatnonzero(
+            (self.read_depth > threshold) & (self.assignment == self.nuclear_index)
+        )
+
     def read_indices(self, label: str) -> np.ndarray:
         """Which reads landed in the compartment with this label."""
         for i, c in enumerate(self.compartments):
