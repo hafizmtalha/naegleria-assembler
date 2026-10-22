@@ -1,0 +1,71 @@
+# Settings for the Snakemake workflow. Everything here has a sensible default,
+# so a first run usually only needs the read files changing.
+
+# --- Where the reads are ----------------------------------------------------
+# Leave a list empty if you do not have that kind of read. The pipeline works
+# with long reads on their own, short reads on their own, or both together.
+reads:
+  long:
+    - data/real/ont_subset.fastq.gz
+  short: []
+
+# What the long reads came off. One of: ont, ont-hq, hifi, pacbio.
+# ont is the older, noisier nanopore chemistry. ont-hq is the newer accurate
+# kind, and picking the right one matters, because the assembler is told to
+# expect a different error rate.
+read_type: ont
+
+# --- Sorting reads into compartments ----------------------------------------
+triage:
+  # k-mer length. 21 is a good default. Drop it to 15 if the reads are very
+  # noisy, since one error anywhere in a k-mer destroys it and a shorter k-mer
+  # is destroyed less often.
+  k: 21
+
+  # Keep about one k-mer in this many when counting. This is the memory knob.
+  # 100 is plenty for long reads and keeps the table about a hundred times
+  # smaller. Use 10 or 20 for short reads, which contribute fewer k-mers each.
+  scale: 100
+
+  # How much a hump has to stand out from its surroundings to count as a
+  # compartment, in log10 units. 0.15 means about one and a half fold. Lower
+  # finds more compartments and more noise.
+  min_prominence: 0.15
+
+# --- The small circles ------------------------------------------------------
+circles:
+  # How deeply to cover each element before assembling it. There is no gain in
+  # throwing two thousand fold coverage at a fifteen kilobase circle.
+  target_depth: 60
+
+  # k-mer length for finding overlaps between reads. Shorter than the triage k
+  # on purpose, because here we need overlaps to be found on noisy reads rather
+  # than depths to be measured precisely.
+  k: 15
+
+  # The most high copy compartments to try to assemble.
+  max_elements: 4
+
+# --- The nuclear assembly ---------------------------------------------------
+nuclear:
+  # auto picks Flye for long reads and SPAdes for short ones. nagasm uses the
+  # assembler in this package, which is there to be read rather than to beat a
+  # mature tool.
+  engine: auto
+
+  # Leave empty to work it out from which read files were given. Otherwise one
+  # of: long, short, hybrid, long_then_polish.
+  mode: ""
+
+  # Contigs shorter than this are dropped.
+  min_contig_bp: 500
+
+# --- Polishing --------------------------------------------------------------
+polish:
+  rounds: 2
+
+# --- Resources --------------------------------------------------------------
+threads: 8
+memory_gb: 12
+
+outdir: results

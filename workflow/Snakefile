@@ -1,0 +1,127 @@
+"""Snakemake wrapper around the nagasm pipeline.
+
+The pipeline is a single Python program, so this file is thin on purpose. What
+it adds is the things a workflow manager is actually good at: knowing which
+steps have already run, keeping a log for each one, and letting you rerun the
+assembly without redoing the triage.
+
+Run it with:
+
+    snakemake --cores 8
+
+or, to only sort the reads into compartments and look at the depth plot first:
+
+    snakemake --cores 4 triage_only
+"""
+
+import os
+
+configfile: "config/config.yaml"
+
+OUTDIR = config.get("outdir", "results")
+LONG = config["reads"].get("long") or []
+SHORT = config["reads"].get("short") or []
+
+if not LONG and not SHORT:
+    raise WorkflowError(
+        "No read files are listed in config/config.yaml. Put at least one file "
+        "under reads.long or reads.short."
+    )
+
+# Triage runs on the long reads when there are any, because a long read's depth
+# describes where it came from far better than a short read's does.
+TRIAGE_READS = LONG or SHORT
+
+
+def flag(name, value):
+    """A command line flag, left out entirely when the value is empty."""
+    return [name, str(value)] if value else []
+
+
+rule all:
+    input:
+        f"{OUTDIR}/report.md",
+        f"{OUTDIR}/summary.json",
+        f"{OUTDIR}/figures/depth_spectrum.png",
+
+
+rule triage_only:
+    """Sort the reads into compartments and draw the depth plot, nothing more.
+
+    Worth running first on a new dataset. It takes a fraction of the time of a
+    full assembly and tells you whether the compartments this whole approach
+    relies on are actually there.
+    """
+    input:
+        reads=TRIAGE_READS,
+    output:
+        plot=f"{OUTDIR}/triage/figures/depth_spectrum.png",
+    params:
+        outdir=f"{OUTDIR}/triage",
+        k=config["triage"]["k"],
+        scale=config["triage"]["scale"],
+    threads: config["threads"]
+    log:
+        "logs/triage.log",
+    shell:
+        """
+        nagasm triage {input.reads} \
+            --outdir {params.outdir} \
+            --threads {threads} \
+            -k {params.k} \
+            --scale {params.scale} \
+            > {log} 2>&1
+        """
+
+
+rule assemble:
+    """The whole pipeline: triage, the circles, the nuclear assembly, polishing."""
+    input:
+        long=LONG,
+        short=SHORT,
+    output:
+        report=f"{OUTDIR}/report.md",
+        summary=f"{OUTDIR}/summary.json",
+        plot=f"{OUTDIR}/figures/depth_spectrum.png",
+    params:
+        outdir=OUTDIR,
+        long_flag=lambda wildcards, input: ("--long " + " ".join(input.long)) if input.long else "",
+        short_flag=lambda wildcards, input: ("--short " + " ".join(input.short)) if input.short else "",
+        read_type=config["read_type"],
+        k=config["triage"]["k"],
+        scale=config["triage"]["scale"],
+        engine=config["nuclear"]["engine"],
+        mode=("--mode " + config["nuclear"]["mode"]) if config["nuclear"].get("mode") else "",
+        min_contig=config["nuclear"]["min_contig_bp"],
+        rounds=config["polish"]["rounds"],
+        memory=config["memory_gb"],
+    threads: config["threads"]
+    log:
+        "logs/assemble.log",
+    shell:
+        """
+        nagasm assemble \
+            {params.long_flag} \
+            {params.short_flag} \
+            --outdir {params.outdir} \
+            --threads {threads} \
+            --memory {params.memory} \
+            --read-type {params.read_type} \
+            -k {params.k} \
+            --scale {params.scale} \
+            --engine {params.engine} \
+            {params.mode} \
+            --min-contig {params.min_contig} \
+            --polish-rounds {params.rounds} \
+            > {log} 2>&1
+        """
+
+
+rule assembly_stats:
+    """Print N50 and friends for an assembly that already exists."""
+    input:
+        fasta=f"{OUTDIR}/assembly/nuclear.fasta",
+    output:
+        txt=f"{OUTDIR}/assembly/nuclear_stats.txt",
+    shell:
+        "nagasm stats {input.fasta} > {output.txt}"
