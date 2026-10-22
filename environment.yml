@@ -1,0 +1,35 @@
+name: nagasm
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # Core
+  - python=3.12
+  - pip
+  - maturin=1.7.8
+  - numpy=2.1.3
+  - scipy=1.14.1
+  - matplotlib-base=3.9.2
+  - pyyaml=6.0.2
+
+  # Workflow
+  - snakemake-minimal=9.27.1
+
+  # Reading and writing sequence files, and the stats we report. FASTA and
+  # FASTQ are parsed by this package (nagasm/seqio.py), so there is no pysam.
+  - seqkit=2.14.0
+  - samtools=1.24
+
+  # The proven tools the nuclear step leans on in stage one
+  - minimap2=2.31
+  - flye=2.9.6
+  - racon=1.5.0
+  - spades=4.3.0
+
+  # Assembly stats (N50 and friends) are computed by this package itself, in
+  # nagasm/stats.py, so there is no QUAST here. One less thing to install, and
+  # the numbers are ones you can read the code for.
+
+  # Tests
+  - pytest=8.3.3
+  - pytest-cov=6.0.0

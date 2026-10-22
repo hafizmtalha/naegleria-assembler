@@ -1,0 +1,26 @@
+[package]
+name = "nagcore"
+version = "0.1.0"
+edition = "2021"
+description = "Fast inner loops for the Naegleria assembler"
+license = "MIT"
+
+[lib]
+name = "nagcore"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.22.6", features = ["abi3-py39"] }
+rayon = "1.10.0"
+rustc-hash = "2.0.0"
+
+[features]
+# On by default for the real build. Tests turn it off with --no-default-features
+# so the test binary can link against libpython.
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
