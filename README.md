@@ -121,25 +121,32 @@ percent, which makes this a hard test rather than an easy one.
 
 | | Our assembly | Published |
 |---|---|---|
-| Length | 48,969 bp | 49,531 bp |
+| Length | 48,281 bp | 49,531 bp |
 | Shape | closed circle | circle |
-| Identity | 96.8% | |
+| Covers the reference | 97.8% | |
+| Identity where aligned | 98.0% | |
 
-Aligning it against the published mitochondrial genome
-([NC_021104.1](https://www.ncbi.nlm.nih.gov/nuccore/NC_021104.1)) covers the
-reference from end to end. Nothing is missing. The three percent that does not
-match is leftover nanopore error, and it would come down with more polishing
-rounds or a handful of short reads.
+That is against the published mitochondrial genome
+([NC_021104.1](https://www.ncbi.nlm.nih.gov/nuccore/NC_021104.1)). Nothing
+substantial is missing. The two percent that does not match is leftover nanopore
+error, and it would come down with more polishing rounds or a handful of short
+reads.
 
 Of the reads that really do come from the mitochondrion, 97.1 percent were put in
 the right compartment, with no reference used at any point.
 
 **The rDNA circle came out too, and the story behind it is worth telling.**
 
-| | Our assembly | Published for this strain |
+| | Our assembly | Published |
 |---|---|---|
-| Length | 15,644 bp | 15,936 bp |
+| Length | 15,644 bp | 15,786 bp (strain LEE) |
 | Shape | closed circle | circle |
+| Covers the reference | 95.7% | |
+| Identity where aligned | 98.1% | |
+
+The published circle used for that comparison
+([MT741533.1](https://www.ncbi.nlm.nih.gov/nuccore/MT741533.1)) is from a
+different strain, so some of the difference is real biology rather than error.
 
 What is interesting is that the depth sorting on its own did not find it. In this
 library the rDNA sits at about eleven times the nuclear depth, which sounds like
@@ -159,6 +166,15 @@ straight pieces. The one thing that closed into a circle was the rDNA.
 That step only exists because the real data refused to behave like the synthetic
 data. It is in `TriageResult.deep_outlier_indices`, with the reasoning written
 next to it.
+
+**Three smaller circles also came out, and we do not know what they are.**
+
+They are about 3.3 kb each, they close cleanly, they are covered deeply, and
+they share no sequence at all with either of the two circles above or with the
+published mitochondrial genome. They may be real. They may be the walk closing a
+loop that is not there. The pipeline reports them with their repeat share next to
+them and does not claim they are anything. Saying so is better than quietly
+dropping them or quietly promoting them.
 
 ### On data where we know the answer
 
