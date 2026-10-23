@@ -324,7 +324,7 @@ rust/src/
 └── sketch.rs      anchors, and where two reads line up
 ```
 
-There are 72 Python tests and 18 Rust tests.
+There are 79 Python tests and 18 Rust tests.
 
 ```bash
 pytest
