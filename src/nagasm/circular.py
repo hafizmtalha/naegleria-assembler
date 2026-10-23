@@ -209,29 +209,68 @@ def _walk(
     shuffling sideways through a pile of reads that all start in nearly the same
     place.
 
-    Returns the chain and, if the walk came right back round to the seed, the
-    length of the circle it went round. Zero means it did not close.
+    ## Spotting the lap
+
+    On a circle the walk never runs out of reads. Coverage is deep, so after
+    going right round it meets a fresh set of reads covering the sequence it has
+    already crossed, and it carries on into a second lap.
+
+    The way to notice is to watch for a read we have already put down. Every read
+    the walk places keeps its offset. When the current read overlaps one of those
+    and the overlap says it should sit a long way back from where we actually put
+    it, the walk has come round and the gap between the two answers is the length
+    of the circle.
+
+    An earlier version only watched for the seed read itself. That works when the
+    seed happens to be covered at the point the walk arrives back, and fails
+    quietly when it is not: the walk sails past its own starting point and closes
+    on the second lap instead, giving a circle exactly twice the real length. The
+    rDNA circle came out at 29.9 kb that way, against a true length near 15.8 kb.
+    Watching every placed read rather than just the seed fixes it, because by
+    then there are dozens of reads laid down near the origin and the walk only
+    has to meet one of them.
+
+    Returns the chain and the circle length, or zero if it did not close.
     """
     out: list[Placement] = []
     current = seed
     offset = 0
     forward = True
-    seed_len = len(reads[seed])
+    placed: dict[int, int] = {seed: 0}
+
+    # A lap has to be longer than this to be believed. Anything shorter is
+    # ordinary disagreement between two overlaps rather than a trip round.
+    #
+    # The bar is deliberately low and fixed, and it took two wrong answers to
+    # work out that it should be.
+    #
+    # The temptation is to scale it to the reads, on the grounds that a lap
+    # should be longer than a read. Both ways of doing that fail. Scaling to the
+    # longest read put the bar above the size of the rDNA circle, because that
+    # read set held a few reads of over 80 kb, so the real lap never counted and
+    # the walk went round twice. Scaling to the typical read then did the same
+    # thing to the mitochondrion, whose reads are long next to it.
+    #
+    # The bar does not need to be anywhere near a read length. A read that has
+    # been placed correctly sits where the overlap says it should, so the gap is
+    # a few tens of bases. Only a genuine trip round the circle produces a gap of
+    # thousands. A couple of kilobases clears the jitter with room to spare, and
+    # leaves every element larger than that findable.
+    min_lap = 2_000
 
     while True:
-        # Have we arrived back at the start? Only believe it once we are clear of
-        # the seed read itself, otherwise the overlap we set out along would be
-        # mistaken for a full lap.
-        if offset > seed_len:
-            for other, same_strand, shift, anchors in graph.get(current, ()):
-                if other != seed:
-                    continue
-                implied, _ = _place_neighbour(
-                    offset, forward, len(reads[current]), seed_len, same_strand, shift, k
-                )
-                circumference = implied if rightwards else -implied
-                if circumference > seed_len:
-                    return out, circumference
+        for other, same_strand, shift, _anchors in graph.get(current, ()):
+            previous = placed.get(other)
+            if previous is None:
+                continue
+            implied, _ = _place_neighbour(
+                offset, forward, len(reads[current]), len(reads[other]), same_strand, shift, k
+            )
+            gap = implied - previous
+            if not rightwards:
+                gap = -gap
+            if gap > min_lap:
+                return out, gap
 
         best: tuple[int, int, bool, int] | None = None
         for other, same_strand, shift, anchors in graph.get(current, ()):
@@ -259,6 +298,7 @@ def _walk(
         if abs(new_offset) > max_span:
             return out, 0
         visited.add(other)
+        placed[other] = new_offset
         out.append(Placement(other, new_offset, new_forward, anchors))
         current, offset, forward = other, new_offset, new_forward
 
@@ -744,6 +784,26 @@ def reads_from_element(
     return out
 
 
+def same_element(a: str, b: str, k: int = 15, w: int = 10, min_share: float = 0.4) -> bool:
+    """Whether two assembled sequences describe the same molecule.
+
+    Compared through their anchor k-mers, so two drafts of one element match
+    even though they start at different points, run in different directions and
+    carry different sequencing errors.
+
+    The share is measured against the shorter of the two, so a fragment of an
+    element counts as the same thing rather than as something new.
+    """
+    if not a or not b:
+        return False
+    anchors_a = {h for h, _, _ in nagcore.sketch(a + a, k, w, 1.0)}
+    anchors_b = {h for h, _, _ in nagcore.sketch(b + b, k, w, 1.0)}
+    if not anchors_a or not anchors_b:
+        return False
+    shared = len(anchors_a & anchors_b)
+    return shared / min(len(anchors_a), len(anchors_b)) >= min_share
+
+
 def assemble_elements(
     reads: list[str],
     expected_bp: int = 0,
@@ -775,6 +835,12 @@ def assemble_elements(
             break
         assembly = assemble_circle(remaining, expected_bp=expected_bp, **kwargs)
         if not assembly.sequence or len(assembly.sequence) < min_length_bp:
+            break
+
+        # The reads belonging to an element are not always all claimed, so the
+        # leftovers can assemble into the same thing a second time. Say so and
+        # stop rather than reporting one molecule twice.
+        if any(same_element(assembly.sequence, seen.sequence) for seen in found):
             break
 
         found.append(assembly)

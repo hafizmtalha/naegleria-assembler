@@ -218,6 +218,13 @@ def run(
                 # Nuclear repeats make up most of this set and they come out as
                 # lines. Only the circles are worth reporting as elements.
                 continue
+            # The deep reads include the high copy compartments, so an element
+            # already assembled from one of those will turn up here again.
+            if any(
+                circular.same_element(asm.sequence, rec.seq) for rec in element_records
+            ):
+                log("  found an element already assembled from a compartment, skipping")
+                continue
             sequence = asm.sequence
             if not settings.skip_polish and polish_mod.have("minimap2") and polish_mod.have("racon"):
                 polished = polish_mod.polish(

@@ -234,3 +234,63 @@ def test_the_resolvability_note_warns_when_reads_are_shorter_than_the_repeats():
 
     long_reads = ["A" * (len(element) + 100)]
     assert "resolved" in resolvability_note(element, long_reads)
+
+
+# --- telling one element from another --------------------------------------
+
+
+def test_the_same_circle_read_two_different_ways_is_recognised():
+    from nagasm.circular import same_element
+
+    rng = random.Random(21)
+    circle = random_sequence(8_000, rng, gc=0.34)
+    spun = circle[3_100:] + circle[:3_100]
+    flipped = reverse_complement(circle)
+
+    assert same_element(circle, spun), "a rotation is the same molecule"
+    assert same_element(circle, flipped), "the other strand is the same molecule"
+
+
+def test_a_fragment_counts_as_the_same_element():
+    from nagasm.circular import same_element
+
+    rng = random.Random(22)
+    circle = random_sequence(10_000, rng, gc=0.34)
+    assert same_element(circle, circle[2_000:7_000])
+
+
+def test_two_unrelated_circles_are_not_confused():
+    from nagasm.circular import same_element
+
+    rng = random.Random(23)
+    assert not same_element(
+        random_sequence(9_000, rng, gc=0.34), random_sequence(9_000, rng, gc=0.34)
+    )
+
+
+def test_assemble_elements_does_not_report_one_molecule_twice():
+    from nagasm.circular import assemble_elements
+
+    truth, reads = make_circle(length=9_000, depth=300, read_length=2_500, error_rate=0.0)
+    found = assemble_elements(reads, expected_bp=9_000, max_elements=4, target_depth=50)
+    assert len(found) == 1, (
+        f"one circle was sequenced, so one element should come back, got "
+        f"{[len(f) for f in found]}"
+    )
+
+
+def test_assemble_elements_finds_two_different_circles_in_one_pile():
+    from nagasm.circular import assemble_elements
+
+    rng = random.Random(24)
+    big = random_sequence(14_000, rng, gc=0.34)
+    small = random_sequence(6_000, rng, gc=0.42)
+    reads = sample_reads(big, 150, 2_500, rng, circular=True)
+    reads += sample_reads(small, 150, 2_500, rng, circular=True)
+    rng.shuffle(reads)
+
+    found = assemble_elements(reads, expected_bp=0, max_elements=4, target_depth=60)
+    lengths = sorted(len(f) for f in found)
+    assert len(found) == 2, f"two circles went in, got lengths {lengths}"
+    assert abs(lengths[0] - 6_000) < 600
+    assert abs(lengths[1] - 14_000) < 1_400
