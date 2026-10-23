@@ -176,6 +176,32 @@ loop that is not there. The pipeline reports them with their repeat share next t
 them and does not claim they are anything. Saying so is better than quietly
 dropping them or quietly promoting them.
 
+**The nuclear assembly stands up next to the published one.**
+
+| | Our assembly | Published |
+|---|---|---|
+| Total length | 28,093,592 bp | 29.5 Mb |
+| Contigs | 65 | 81 to 90 |
+| N50 | 714,291 bp | 717,491 bp |
+
+The published assembly used far more data than the 0.63 Gb subset here, so this
+is not a claim that our nuclear assembly is better. The point is that the reads
+left over after the circles are taken out still build into chromosome sized
+pieces, which is what the sorting step is meant to protect.
+
+Checking that assembly properly turned up a real bug in our own tool. A 48,897 bp
+contig in the first nuclear run was a complete second copy of the mitochondrion.
+The depth sorting had put 97.1 percent of the mitochondrial reads in the right
+place, but the three percent it missed still came to roughly sixty times coverage
+of a 49 kb molecule, which is plenty for Flye to rebuild it. Being nearly right
+is not good enough when the leftovers are that deep.
+
+The fix is to stop trusting depth alone. Once an element is assembled, every read
+heading for the nuclear set is checked against it directly, and the ones that
+match are dropped. That removed 1,980 reads. In the run above there is no longer
+any contig matching the published mitochondrial genome, and the earlier output is
+kept in the git history so the difference can be seen.
+
 ### On data where we know the answer
 
 Real data tells you whether something works. Synthetic data tells you how well,
