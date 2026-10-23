@@ -258,6 +258,12 @@ def write_report(payload: dict[str, Any], path: Path) -> Path:
                 f"### {element['name']}: {element['length']:,} bp, {shape}"
             )
             add("")
+            if element.get("repeat_content") is not None:
+                share = element["repeat_content"]
+                add(
+                    f"* About {share:.0%} of it sits inside sequence that repeats "
+                    f"elsewhere in the same element."
+                )
             for note in element.get("notes", []):
                 add(f"* {note}.")
             if element.get("resolvability"):

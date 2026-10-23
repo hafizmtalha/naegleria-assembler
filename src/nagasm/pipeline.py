@@ -45,6 +45,11 @@ class Settings:
     # own even when they never formed a hump. See
     # TriageResult.deep_outlier_indices for why this is needed.
     deep_outlier_factor: float = 4.0
+    # How many circles to report from the deep outlier search. That search is a
+    # heuristic rather than a measurement, and most of what it turns up beyond
+    # the first hit is nuclear repeat that the walk happened to close. Two keeps
+    # the real find without burying it.
+    max_deep_elements: int = 2
     skip_nuclear: bool = False
     skip_polish: bool = False
 
@@ -187,6 +192,7 @@ def run(
                     "mean_coverage": round(asm.mean_coverage, 1),
                     "reads_used": asm.n_reads_used,
                     "notes": asm.notes,
+                    "repeat_content": round(circular.repeat_content(sequence, 50), 3),
                     "resolvability": circular.resolvability_note(sequence, comp_reads),
                 }
             )
@@ -208,7 +214,7 @@ def run(
             circular.assemble_elements(
                 outlier_reads,
                 expected_bp=0,
-                max_elements=settings.max_elements,
+                max_elements=settings.max_deep_elements,
                 target_depth=settings.circle_depth,
                 k=settings.circle_k,
             ),
@@ -217,13 +223,6 @@ def run(
             if not asm.is_circular:
                 # Nuclear repeats make up most of this set and they come out as
                 # lines. Only the circles are worth reporting as elements.
-                continue
-            # The deep reads include the high copy compartments, so an element
-            # already assembled from one of those will turn up here again.
-            if any(
-                circular.same_element(asm.sequence, rec.seq) for rec in element_records
-            ):
-                log("  found an element already assembled from a compartment, skipping")
                 continue
             sequence = asm.sequence
             if not settings.skip_polish and polish_mod.have("minimap2") and polish_mod.have("racon"):
@@ -238,6 +237,19 @@ def run(
                 )
                 sequence = circular.rotate_to_canonical_start(polished.sequence)
                 asm.notes.extend(polished.notes)
+
+            # The deep reads include the high copy compartments, so an element
+            # already assembled from one of those turns up here again.
+            #
+            # This comparison has to happen after polishing, not before. An
+            # unpolished draft carries the error rate of the reads, so its
+            # anchor k-mers barely overlap those of a polished sequence even
+            # when both describe the same molecule. Comparing the two states
+            # let the mitochondrial genome through a second time.
+            if any(circular.same_element(sequence, rec.seq) for rec in element_records):
+                log("  this is an element already assembled from a compartment, skipping")
+                continue
+
             name = f"deep_element_{n}_circular"
             element_records.append(Record(name, sequence))
             elements.append(
@@ -249,6 +261,7 @@ def run(
                     "mean_coverage": round(asm.mean_coverage, 1),
                     "reads_used": asm.n_reads_used,
                     "notes": asm.notes,
+                    "repeat_content": round(circular.repeat_content(sequence, 50), 3),
                     "resolvability": circular.resolvability_note(sequence, outlier_reads),
                 }
             )
