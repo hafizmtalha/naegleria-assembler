@@ -282,6 +282,39 @@ def run(
             log("No nuclear compartment was found, so there is nothing to assemble.")
         else:
             nuclear_long = _reads_for(long_reads, triage_result, nuc.label) if long_reads else []
+
+            # Take out any read that matches an element we already assembled.
+            #
+            # Sorting by depth gets most of them, but it does not have to miss
+            # many to matter. On the real data 97 percent of the mitochondrial
+            # reads went to the right compartment, and the 3 percent left behind
+            # still amounted to sixty fold coverage of a 49 kb molecule, which
+            # was plenty for the nuclear assembler to build the whole thing a
+            # second time. A 49 kb mitochondrial contig sat in the middle of the
+            # chromosomes, which is exactly what this package exists to avoid.
+            #
+            # Now that the elements are assembled, we can do better than a depth
+            # cutoff and ask directly whether a read looks like one of them.
+            if element_records and nuclear_long:
+                before = len(nuclear_long)
+                for record in element_records:
+                    if not nuclear_long:
+                        break
+                    belongs = circular.reads_from_element(
+                        nuclear_long, record.seq, is_circular="circular" in record.name
+                    )
+                    nuclear_long = [
+                        r for r, hit in zip(nuclear_long, belongs) if not hit
+                    ]
+                removed = before - len(nuclear_long)
+                if removed:
+                    log(
+                        f"  removed {removed:,} reads that match an element already "
+                        f"assembled, leaving {len(nuclear_long):,}"
+                    )
+                    payload.setdefault("nuclear_prefilter", {})[
+                        "reads_removed_matching_elements"
+                    ] = removed
             # Short reads were not triaged, so they all go in. The high copy
             # elements are already assembled separately, and leaving their short
             # reads in costs a little time rather than correctness.

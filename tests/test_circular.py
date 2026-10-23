@@ -294,3 +294,35 @@ def test_assemble_elements_finds_two_different_circles_in_one_pile():
     assert len(found) == 2, f"two circles went in, got lengths {lengths}"
     assert abs(lengths[0] - 6_000) < 600
     assert abs(lengths[1] - 14_000) < 1_400
+
+
+def test_reads_from_an_element_are_recognised_even_when_noisy():
+    # This is what keeps an already assembled circle out of the nuclear
+    # assembly. Depth sorting alone leaves a few percent of a high copy
+    # element's reads behind, and a few percent of a very deep element is still
+    # deep enough for an assembler to rebuild the whole thing.
+    from nagasm.circular import reads_from_element
+
+    rng = random.Random(31)
+    circle = random_sequence(10_000, rng, gc=0.34)
+    from_circle = sample_reads(
+        circle, depth=20, mean_length=2_000, rng=rng, circular=True, error_rate=0.05
+    )
+    from_elsewhere = [random_sequence(2_000, rng, gc=0.34) for _ in range(40)]
+
+    belongs = reads_from_element(from_circle + from_elsewhere, circle)
+    caught = sum(belongs[: len(from_circle)])
+    false_alarms = sum(belongs[len(from_circle) :])
+
+    assert caught / len(from_circle) > 0.9, "most of the element's own reads should match"
+    assert false_alarms == 0, "unrelated reads should not be claimed"
+
+
+def test_an_element_read_set_is_not_claimed_by_a_different_element():
+    from nagasm.circular import reads_from_element
+
+    rng = random.Random(32)
+    one = random_sequence(9_000, rng, gc=0.34)
+    two = random_sequence(9_000, rng, gc=0.34)
+    reads_of_two = sample_reads(two, depth=20, mean_length=2_000, rng=rng, circular=True)
+    assert not any(reads_from_element(reads_of_two, one))
