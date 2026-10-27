@@ -509,60 +509,204 @@ There is a Snakemake workflow too, if you prefer one.
 snakemake --cores 8
 ```
 
-### Circular genome plots, optional
+### Pictures
 
-An extra module that draws a circular element as a circle. Nothing in the
-assembly depends on it and you can ignore it entirely.
+**You get them without asking.** When a run finishes, it draws a circle for
+every circular element, a karyotype of the chromosomes and a contiguity curve,
+then prints the command to change them. Nothing in the assembly depends on any
+of this, and a missing matplotlib or a sequence too short to draw ends in a note
+rather than a failed run. Losing a finished assembly to a broken figure would be
+absurd.
 
 ```bash
-# reference free. Everything drawn comes from the element itself
-nagasm circleplot results/assembly/high_copy_elements.fasta -o figures
-
-# add a read depth ring, still reference free
-nagasm circleplot results/assembly/high_copy_elements.fasta -o figures \
-  --long reads.fastq.gz --threads 8
-
-# reference based. Adds identity rings against a reference you supply
-nagasm circleplot results/assembly/high_copy_elements.fasta -o figures \
-  --reference known_plasmids.fna --threads 8
+nagasm assemble -l reads.fastq.gz -o results --plots auto   # the default
+nagasm assemble -l reads.fastq.gz -o results --plots all    # adds coverage and a dotplot
+nagasm assemble -l reads.fastq.gz -o results --plots none   # draws nothing
+nagasm assemble -l reads.fastq.gz -o results --plot-theme dark --plot-format svg
 ```
 
-One picture per sequence in the file. The rings run from the outside in.
+`auto` is cheap, since it reads only the assembly. `all` adds two minimap2 runs,
+one for coverage and one for the dotplot, so it costs a few minutes on a big
+read set.
 
-| Ring | Mode | What it shows |
+**Then draw whatever else you want.** Everything is also a standalone command,
+so you can keep going after the run without assembling again.
+
+```bash
+nagasm plot results/assembly/high_copy_elements.fasta --kind all -o figures
+nagasm plot --help     # every option
+```
+
+#### The kinds
+
+| `--kind` | What it draws | Needs |
 |---|---|---|
-| GC content | reference free | GC in each window, drawn against the element's own mean |
-| GC skew | reference free | (G-C)/(G+C), drawn around zero |
-| Cumulative GC skew | reference free | the running total, with the peak and trough marked |
-| Read depth | reference free, needs reads | coverage in each window, around the mean |
-| Identity to reference | reference based | red for low identity, green for high |
-| Not in reference | reference based | windows with no alignment at all |
+| `auto` | circles if anything is circular, otherwise a karyotype | nothing |
+| `circle` | one circular plot per sequence | reads and a reference are optional |
+| `karyotype` | every contig as a bar, to the same scale | nothing |
+| `dotplot` | a sequence against itself, or against a reference | minimap2 |
+| `coverage` | read depth along each contig, drawn straight | reads, minimap2 |
+| `nx` | the contiguity curve, of which N50 is one point | nothing |
+| `all` | all of the above | as above |
 
-**Which mode to use.** Reference free is the one that matches the rest of the
-pipeline, since it works on an isolate nobody has sequenced. Cumulative GC skew
-is the ring worth looking at, because a replicon that is genuinely replicated
-usually turns once at the origin and once at the terminus, giving two halves. A
-collapsed repeat tends to show nothing of the sort.
+#### Circles
+
+One picture per sequence. Rings run from the outside in, and you can ask for any
+subset.
+
+| Ring | `--rings` name | What it shows |
+|---|---|---|
+| GC content | `gc` | GC per window, against the element's own mean |
+| GC skew | `skew` | (G-C)/(G+C), drawn around zero |
+| Cumulative GC skew | `cumulative` | the running total, peak and trough marked |
+| Read depth | `depth` | coverage per window. Needs `--long` |
+| Identity to reference | `identity` | red low, green high. Needs `--reference` |
+| Not in reference | `missing` | windows with no alignment at all |
+
+```bash
+# reference free, the mode that matches the rest of the pipeline
+nagasm plot results/assembly/high_copy_elements.fasta --kind circle -o figures
+
+# add a depth ring, still reference free
+nagasm plot results/assembly/high_copy_elements.fasta --kind circle -o figures \
+  --long reads.fastq.gz --threads 8
+
+# reference based, for a write up rather than for discovery
+nagasm plot results/assembly/high_copy_elements.fasta --kind circle -o figures \
+  --reference known_plasmids.fna --threads 8
+
+# just two rings, rotated, no legend, as a vector file
+nagasm plot element.fasta --kind circle --rings gc,cumulative \
+  --no-legend --format svg --theme dark
+```
+
+**Which mode.** Reference free works on an isolate nobody has sequenced, which
+is the whole point of the pipeline. Cumulative GC skew is the ring worth
+reading, because a replicon that is genuinely replicated usually turns once at
+the origin and once at the terminus. A collapsed repeat tends to show nothing of
+the sort.
 
 Reference based answers a different question, which is not whether your circle
 is real but how it differs from one already published. It needs minimap2 and it
-needs you to have the answer already, so it is for a write up rather than for
-discovery.
-
-**What the picture cannot do.** It is drawn from the same alignments the support
-check uses, so a plot that looks beautiful is not independent evidence that the
-element is real. Read the containment number next to it. The plot is for showing
-someone else what you found, and for catching the case where the numbers look
-fine and the structure does not.
+needs you to have the answer already.
 
 Below is the E. coli plasmid p4 we recovered, drawn against the finished
 reference for that same sample.
 
 ![Circular plot of a recovered plasmid](docs/figures/circleplot_example.png)
 
-The inner ring is the useful part. It is split between a stretch matching the
-reference at 99.9 percent and a stretch at 92 percent, which is real structure
-that a single average identity figure would have hidden completely.
+The inner ring is the useful part. It splits between a stretch matching the
+reference at 99.9 percent and a stretch at 92 percent, real structure that a
+single average identity figure would have hidden completely.
+
+#### Karyotypes
+
+Every contig as a bar, all to the same scale, shaded by GC or by read depth.
+This is the picture that tells you at a glance whether you have a few
+chromosomes or a heap of rubble.
+
+```bash
+nagasm plot results/assembly/nuclear.fasta --kind karyotype -o figures
+
+# shade by read depth instead of GC
+nagasm plot results/assembly/nuclear.fasta --kind karyotype -o figures \
+  --colour-by depth --long reads.fastq.gz --threads 8
+
+# pick out particular contigs, and draw more of them
+nagasm plot results/assembly/nuclear.fasta --kind karyotype -o figures \
+  --max-contigs 60 --highlight nuclear_contig_1 nuclear_contig_7
+
+# sorted by name, greyscale, for print
+nagasm plot results/assembly/nuclear.fasta --kind karyotype \
+  --sort-by name --theme print --format pdf
+```
+
+![Karyotype of the Naegleria nuclear assembly](docs/figures/karyotype_example.png)
+
+Only the largest `--max-contigs` are drawn, and the subtitle says how many were
+left out. A 65 contig assembly is readable. A 4,000 contig one is a black smear,
+and drawing it honestly beats drawing it uselessly.
+
+The GC scale follows your data rather than sitting at a fixed 25 to 75 percent.
+On Naegleria, where nearly every window sits near 35 percent, a fixed band put
+the whole picture in one colour and said nothing. The scale above runs 33 to 41
+percent, and the variation is real.
+
+Contigs that closed into a circle get a small ring after their name.
+
+#### Dotplots
+
+A sequence against itself shows its repeats, which are the thing that breaks
+assemblies. The main diagonal is dropped, so everything left is a repeat.
+
+```bash
+nagasm plot element.fasta --kind dotplot -o figures --threads 8
+nagasm plot assembly.fasta --kind dotplot -o figures --reference known.fna
+nagasm plot assembly.fasta --kind dotplot --min-block 1000   # only long ones
+```
+
+![Dotplot of the high copy elements against themselves](docs/figures/dotplot_example.png)
+
+A FASTA with several sequences in it is laid end to end with a separator and a
+label per sequence, so position 500 of a 3 kb circle does not land on top of
+position 500 of a 48 kb one. In the plot above, the rDNA circle on the right is
+visibly full of internal repeats, which is the thing the README warns about
+further down under what it cannot resolve.
+
+#### Coverage
+
+Read depth along each contig, drawn straight rather than round, which is easier
+to read numbers off.
+
+```bash
+nagasm plot results/assembly/nuclear.fasta --kind coverage -o figures \
+  --long reads.fastq.gz --threads 8
+nagasm plot elements.fasta --kind coverage --long reads.fastq.gz --log-depth
+```
+
+![Coverage across two recovered plasmids](docs/figures/coverage_example.png)
+
+A flat line is what a real replicon looks like, and both plasmids above are
+flat. A step in the middle usually means two things joined that should not have
+been. A spike usually means a collapsed repeat.
+
+#### Contiguity
+
+N50 is a single point on a curve, and the curve says much more than the point.
+
+```bash
+nagasm plot results/assembly/nuclear.fasta --kind nx -o figures
+nagasm plot mine.fasta --kind nx --compare theirs.fasta published.fasta
+```
+
+![Contiguity curves for two assemblies](docs/figures/contiguity_example.png)
+
+Read it as: for each point along the bottom, the height is the length such that
+contigs at least that long make up that percent of the assembly. A curve that
+stays high for a long way is a good assembly. Quoting N50 alone hides whether
+the curve falls off a cliff just after it, and the two curves above have the
+same shape for very different reasons.
+
+#### Making them look how you want
+
+Every kind takes these.
+
+| Option | Does |
+|---|---|
+| `--theme light\|dark\|print` | `print` is greyscale, for a journal |
+| `--format png\|svg\|pdf` | svg and pdf stay sharp at any size |
+| `--dpi` | for png, default 150 |
+| `--title` | your own title instead of the filename |
+| `--no-legend` | drop the legend |
+| `--figsize W,H` | in inches, for example `12,8` |
+| `--window` | window size in bp, for the circles and coverage |
+| `--threads` | for anything that runs minimap2 |
+
+**What a picture cannot do.** The circles and the coverage plot are drawn from
+the same alignments the support check uses, so a plot that looks beautiful is
+not independent evidence that an element is real. Read the containment number
+next to it. These are for showing someone else what you found, and for catching
+the case where the numbers look fine and the structure does not.
 
 ### Memory and runtime
 
@@ -605,9 +749,10 @@ results/
     └── read_lengths.png          read length by compartment
 ```
 
-Circular plots are not written by `assemble`. Run `nagasm circleplot` on
-`assembly/high_copy_elements.fasta` when you want them, since they are optional
-and some of them need minimap2.
+`assemble` also writes `figures/circle_*.png` for every circular element,
+`figures/karyotype.png` and `figures/contiguity.png`, unless you pass
+`--plots none`. Pass `--plots all` for coverage and a dotplot as well, or run
+`nagasm plot` afterwards for anything else. See [pictures](#pictures).
 
 Every element in `summary.json` carries its own verdict:
 
@@ -686,7 +831,8 @@ src/nagasm/
 ├── nuclear.py     a wrapper. Hands the nuclear reads to Flye or SPAdes
 ├── polish.py      a wrapper. minimap2 and racon, with the trick for circles
 ├── support.py     asking whether an element is really a separate molecule
-├── circleplot.py  optional. Circular genome pictures, nothing depends on it
+├── circleplot.py  optional. Circular genome pictures
+├── plots.py       optional. Karyotypes, dotplots, coverage, contiguity
 ├── stats.py       N50 and friends
 ├── report.py      figures and the written report
 └── pipeline.py    the order the steps happen in
@@ -699,7 +845,7 @@ rust/src/
 
 ## Tests
 
-101 Python tests and 18 Rust tests. They take about twenty seconds.
+119 Python tests and 18 Rust tests. They take about twenty seconds.
 
 ```bash
 pytest
@@ -711,7 +857,8 @@ cd rust && cargo test --no-default-features
 | `test_circular.py` | 24 | closing circles, rotating to a fixed start, overlaps |
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
 | `test_triage.py` | 20 | finding compartments, and refusing to invent them |
-| `test_circleplot.py` | 13 | the ring values behind the optional pictures |
+| `test_plots.py` | 18 | the numbers behind karyotypes, dotplots and coverage |
+| `test_circleplot.py` | 13 | the ring values behind the circular pictures |
 | `test_olc.py` | 9 | the chromosome assembler, on clean data |
 | `test_support.py` | 7 | telling a real element from a chromosomal repeat |
 
@@ -731,9 +878,13 @@ containment metric, which scored the repeat at 0.77 contained and happily
 accepted it, and failing is what showed the metric was normalising by the wrong
 length. It is the reason the current version divides by the full read length.
 
-A plot test is easy to write badly, so `test_circleplot.py` checks the numbers
-behind each ring rather than the picture. A ring drawn smoothly from wrong
-values looks perfectly fine and tells you a lie.
+A plot test is easy to write badly, so the plot tests check the numbers behind
+each picture rather than the picture itself. A ring drawn smoothly from wrong
+values looks perfectly fine and tells you a lie. Three of these guard bugs the
+pictures actually had: a contiguity curve that started at 95 percent instead of
+zero, two assemblies that silently drew over each other because both files were
+called `nuclear.fasta`, and a dotplot that stacked five separate sequences into
+one coordinate space.
 
 ### The worked examples
 

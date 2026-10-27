@@ -60,6 +60,14 @@ class Settings:
     max_deep_elements: int = 2
     skip_nuclear: bool = False
     skip_polish: bool = False
+    # What to draw when the run finishes. "auto" draws a circle for every
+    # circular element plus a karyotype and a contiguity curve, which is what
+    # most people want and nobody remembers to ask for. "none" draws nothing.
+    # "all" adds the coverage plot and the dotplot, which cost a minimap2 run
+    # each.
+    plots: str = "auto"
+    plot_theme: str = "light"
+    plot_format: str = "png"
 
 
 @dataclass
@@ -425,7 +433,95 @@ def run(
     outputs["report"] = report.write_report(payload, outdir / "report.md")
     log(f"Report written to {outputs['report']}.")
 
+    drawn = _draw_plots(settings, outdir, outputs, triage_reads, log)
+    if drawn:
+        outputs["plots"] = drawn
+
     return RunResult(settings=settings, payload=payload, outputs=outputs)
+
+
+def _draw_plots(settings, outdir: Path, outputs: dict, reads, log) -> list[Path]:
+    """Draw the obvious pictures once the assembly is done.
+
+    This runs by default, because the pictures are what most people want and
+    nobody remembers to ask for them. It never fails the run. A missing
+    matplotlib, a missing minimap2 or a sequence too short to draw all end in a
+    note rather than an exception, since losing a finished assembly to a failed
+    figure would be absurd.
+    """
+    if settings.plots == "none":
+        return []
+
+    try:
+        from . import circleplot, plots as plots_mod
+    except Exception as exc:  # matplotlib missing, most likely
+        log(f"  no plots drawn: {exc}")
+        return []
+
+    figures = outdir / "figures"
+    elements = outputs.get("elements")
+    nuclear = outputs.get("nuclear")
+    everything = settings.plots == "all"
+    drawn: list[Path] = []
+
+    try:
+        if elements and Path(elements).exists():
+            drawn += circleplot.plot_all(
+                Path(elements),
+                figures,
+                reads=reads if everything else None,
+                read_type=settings.read_type,
+                threads=settings.threads,
+                theme_name=settings.plot_theme,
+                image_format=settings.plot_format,
+                only_circular=True,
+            )
+        if nuclear and Path(nuclear).exists():
+            drawn.append(
+                plots_mod.karyotype(
+                    Path(nuclear),
+                    figures / f"karyotype.{settings.plot_format}",
+                    colour_by="gc",
+                    theme_name=settings.plot_theme,
+                    threads=settings.threads,
+                )
+            )
+            drawn.append(
+                plots_mod.nx_curve(
+                    Path(nuclear),
+                    figures / f"contiguity.{settings.plot_format}",
+                    theme_name=settings.plot_theme,
+                )
+            )
+        if everything and nuclear and Path(nuclear).exists() and reads:
+            made = plots_mod.coverage_plot(
+                Path(nuclear),
+                reads,
+                figures / f"coverage.{settings.plot_format}",
+                theme_name=settings.plot_theme,
+                read_type=settings.read_type,
+                threads=settings.threads,
+            )
+            if made:
+                drawn.append(made)
+        if everything and elements and Path(elements).exists():
+            made = plots_mod.dotplot(
+                Path(elements),
+                figures / f"dotplot.{settings.plot_format}",
+                theme_name=settings.plot_theme,
+                threads=settings.threads,
+            )
+            if made:
+                drawn.append(made)
+    except Exception as exc:
+        log(f"  plots stopped early: {exc}")
+
+    if drawn:
+        log(f"Drew {len(drawn)} figure(s) in {figures}.")
+        log("  Want them different, or want more of them?")
+        log(f"    nagasm plot {elements or nuclear} --kind all -o {figures} --theme dark")
+        log("  nagasm plot --help lists every option.")
+    return drawn
 
 
 def _reads_for(reads: list[str], result: triage.TriageResult, label: str) -> list[str]:

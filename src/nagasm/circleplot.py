@@ -45,18 +45,16 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 
 from .seqio import Record, read_sequences, write_fasta, write_fastq
 from .polish import have, _preset_for
+from .plots import PALETTE as _COLOURS, apply_theme, gradient, bp_label, safe_name
 
-# Same palette as the other figures, so a report does not look assembled from
-# two different tools.
-_COLOURS = ["#4477AA", "#EE6677", "#228833", "#CCBB44", "#66CCEE", "#AA3377", "#BBBBBB"]
+_IDENTITY_CMAP = gradient("identity")
 
-_IDENTITY_CMAP = LinearSegmentedColormap.from_list(
-    "identity", ["#EE6677", "#CCBB44", "#228833"]
-)
+# The rings that can be drawn, in the order they are drawn from the outside in.
+# Pass a subset to plot_circle to leave some out.
+ALL_RINGS = ("gc", "skew", "cumulative", "depth", "identity", "missing")
 
 
 @dataclass
@@ -346,6 +344,13 @@ def plot_circle(
     read_type: str = "ont",
     threads: int = 4,
     note: str = "",
+    rings: tuple[str, ...] | list[str] | None = None,
+    theme_name: str = "light",
+    title: str = "",
+    legend: bool = True,
+    start: int = 0,
+    figsize: tuple[float, float] = (8.5, 8.5),
+    dpi: int = 150,
 ) -> Path:
     """Draw one circular element and save it.
 
@@ -357,36 +362,46 @@ def plot_circle(
     length = len(sequence)
     if length < 100:
         raise ValueError("too short to draw a useful circle")
+    if start:
+        # Rotate the circle so a feature you care about sits at the top. Only
+        # meaningful for something actually circular.
+        start %= length
+        sequence = sequence[start:] + sequence[:start]
+    wanted = set(rings) if rings else set(ALL_RINGS)
     if window is None:
         # Aim for a few hundred windows, which looks right at any size from a
         # 3 kb circle to a 5 Mb chromosome.
         window = max(10, length // 360)
 
+    palette = _theme_palette(theme_name)
     gc = gc_content(sequence, window)
-    rings: list[Ring] = [
-        Ring(
-            "GC content",
-            gc,
-            colour=_COLOURS[0],
-            note=f"mean {gc.mean():.1%}",
-        ),
-        Ring(
-            "GC skew",
-            gc_skew(sequence, window),
-            colour=_COLOURS[2],
-            centre=0.0,
-            note="(G-C)/(G+C), around zero",
-        ),
-        Ring(
-            "cumulative GC skew",
-            cumulative_gc_skew(sequence, window),
-            kind="curve",
-            colour=_COLOURS[5],
-            note="peak and trough marked",
-        ),
-    ]
+    rings: list[Ring] = []
+    if "gc" in wanted:
+        rings.append(
+            Ring("GC content", gc, colour=palette[0], note=f"mean {gc.mean():.1%}")
+        )
+    if "skew" in wanted:
+        rings.append(
+            Ring(
+                "GC skew",
+                gc_skew(sequence, window),
+                colour=palette[2],
+                centre=0.0,
+                note="(G-C)/(G+C), around zero",
+            )
+        )
+    if "cumulative" in wanted:
+        rings.append(
+            Ring(
+                "cumulative GC skew",
+                cumulative_gc_skew(sequence, window),
+                kind="curve",
+                colour=palette[5],
+                note="peak and trough marked",
+            )
+        )
 
-    if reads:
+    if reads and "depth" in wanted:
         depth = read_depth(
             sequence,
             reads,
@@ -400,16 +415,23 @@ def plot_circle(
                 Ring(
                     "read depth",
                     depth,
-                    colour=_COLOURS[4],
+                    colour=palette[4],
                     note=f"mean {depth.mean():.0f}x, around the mean",
                 )
             )
 
     if reference is not None:
-        rings.extend(reference_rings(sequence, Path(reference), window, threads=threads))
+        for ring in reference_rings(sequence, Path(reference), window, threads=threads):
+            key = "identity" if ring.kind == "heat" else "missing"
+            if key in wanted:
+                rings.append(ring)
 
-    fig = plt.figure(figsize=(8.5, 8.5))
+    if not rings:
+        raise ValueError(f"no rings left to draw. Pick from {', '.join(ALL_RINGS)}")
+
+    fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(111, projection="polar")
+    t = apply_theme(fig, ax, theme_name)
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
 
@@ -431,9 +453,9 @@ def plot_circle(
     ticks = np.linspace(0, 2 * math.pi, 9)[:-1]
     ax.set_xticks(ticks)
     ax.set_xticklabels(
-        [_bp(int(t / (2 * math.pi) * length), length) for t in ticks],
+        [bp_label(int(a / (2 * math.pi) * length), length) for a in ticks],
         fontsize=8,
-        color="#555555",
+        color=t["muted"],
     )
 
     # Labels go in a legend outside the circle. Written on the rings they sat
@@ -445,27 +467,39 @@ def plot_circle(
             colour = _IDENTITY_CMAP(0.75)
         text = ring.label if not ring.note else f"{ring.label}  ({ring.note})"
         handles.append(plt.Line2D([], [], color=colour, linewidth=5, label=text))
-    ax.legend(
-        handles=handles,
-        loc="upper left",
-        bbox_to_anchor=(-0.12, 1.06),
-        frameon=False,
-        fontsize=8,
-        labelspacing=0.9,
-        handlelength=1.4,
-    )
+    if legend:
+        drawn = ax.legend(
+            handles=handles,
+            loc="upper left",
+            bbox_to_anchor=(-0.12, 1.06),
+            frameon=False,
+            fontsize=8,
+            labelspacing=0.9,
+            handlelength=1.4,
+        )
+        for text_item in drawn.get_texts():
+            text_item.set_color(t["fg"])
 
     shape = "circular" if is_circular else "linear"
-    title = f"{name}\n{length:,} bp, {shape}, {window:,} bp windows"
+    heading = title or name
+    caption = f"{heading}\n{length:,} bp, {shape}, {window:,} bp windows"
+    if start:
+        caption += f", rotated to start at {start:,}"
     if note:
-        title += f"\n{note}"
-    ax.set_title(title, fontsize=11, pad=24)
+        caption += f"\n{note}"
+    ax.set_title(caption, fontsize=11, pad=24, color=t["fg"])
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(path, dpi=150, bbox_inches="tight")
+    fig.savefig(path, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return path
+
+
+def _theme_palette(name: str) -> list[str]:
+    from .plots import theme as _theme
+
+    return _theme(name)["palette"]
 
 
 def plot_all(
@@ -476,42 +510,42 @@ def plot_all(
     read_type: str = "ont",
     threads: int = 4,
     window: int | None = None,
+    rings: tuple[str, ...] | list[str] | None = None,
+    theme_name: str = "light",
+    legend: bool = True,
+    image_format: str = "png",
+    dpi: int = 150,
+    only_circular: bool = False,
+    min_length: int = 100,
 ) -> list[Path]:
     """Draw every element in a FASTA file, one picture each."""
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
     for record in read_sequences(elements):
-        if len(record.seq) < 100:
+        if len(record.seq) < max(100, min_length):
             continue
-        safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in record.name)
+        circular = "circular" in record.name.lower()
+        if only_circular and not circular:
+            continue
         written.append(
             plot_circle(
                 record.seq,
-                outdir / f"circle_{safe}.png",
+                outdir / f"circle_{safe_name(record.name)}.{image_format}",
                 name=record.name,
                 reads=reads,
                 reference=reference,
                 window=window,
-                is_circular="circular" in record.name.lower(),
+                is_circular=circular,
                 read_type=read_type,
                 threads=threads,
+                rings=rings,
+                theme_name=theme_name,
+                legend=legend,
+                dpi=dpi,
             )
         )
     return written
 
 
-def _bp(n: int, total: int = 0) -> str:
-    """A tick label, with enough precision that two ticks never read the same.
 
-    The precision follows the whole element rather than the one number, so a
-    6 kb circle gets 1.7 kb and 3.3 kb instead of two ticks both saying 2 kb.
-    """
-    scale = total or n
-    if scale >= 1_000_000:
-        return f"{n / 1_000_000:.2f} Mb" if scale < 10_000_000 else f"{n / 1_000_000:.1f} Mb"
-    if scale >= 10_000:
-        return f"{n / 1_000:.0f} kb"
-    if scale >= 1_000:
-        return f"{n / 1_000:.1f} kb"
-    return f"{n} bp"

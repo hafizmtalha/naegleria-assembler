@@ -103,6 +103,28 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--skip-nuclear", action="store_true", help="only do the high copy circles")
     run.add_argument("--skip-polish", action="store_true", help="leave the drafts unpolished")
 
+    pics = run.add_argument_group("pictures drawn when the run finishes")
+    pics.add_argument(
+        "--plots",
+        default="auto",
+        choices=["auto", "all", "none"],
+        help="auto draws a circle per circular element, a karyotype and a "
+        "contiguity curve. all adds coverage and a dotplot, at the cost of a "
+        "minimap2 run each (default: auto)",
+    )
+    pics.add_argument(
+        "--plot-theme",
+        default="light",
+        choices=["light", "dark", "print"],
+        help="print is greyscale, for a journal (default: light)",
+    )
+    pics.add_argument(
+        "--plot-format",
+        default="png",
+        choices=["png", "svg", "pdf"],
+        help="svg and pdf stay sharp at any size (default: png)",
+    )
+
     # --- triage ---
     tri = sub.add_parser(
         "triage",
@@ -115,45 +137,144 @@ def build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("stats", help="describe an assembly that already exists")
     st.add_argument("fasta", help="an assembly in FASTA")
 
-    # --- circleplot ---
-    # Optional. Nothing in the assembly depends on it.
-    cp = sub.add_parser(
-        "circleplot",
-        help="draw circular genome plots for assembled elements (optional)",
+    # --- plot ---
+    # Optional, all of it. Nothing in the assembly depends on any of this.
+    pl = sub.add_parser(
+        "plot",
+        help="draw pictures of an assembly (optional). Circles, karyotypes, "
+        "dotplots, coverage and contiguity",
     )
-    cp.add_argument("fasta", help="elements to draw, FASTA. Each one gets its own picture")
-    cp.add_argument(
-        "-o", "--outdir", default="figures", help="where to write the pictures (default: figures)"
+    pl.add_argument("fasta", help="the assembly or the elements to draw, FASTA")
+    pl.add_argument(
+        "--kind",
+        default="auto",
+        choices=["auto", "all", "circle", "karyotype", "dotplot", "coverage", "nx"],
+        help="what to draw. auto picks circles for circular elements and a "
+        "karyotype for anything else (default: auto)",
     )
-    cp.add_argument(
+    pl.add_argument(
+        "-o", "--outdir", default="figures", help="where to write them (default: figures)"
+    )
+    pl.add_argument(
         "-l",
         "--long",
         nargs="*",
         default=[],
-        help="reads, to add a depth ring. Reference free, and the honest option",
+        help="reads, for the depth ring, the coverage plot and depth shading. "
+        "Reference free, and the honest option",
     )
-    cp.add_argument(
+    pl.add_argument(
         "-r",
         "--reference",
-        help="a reference FASTA, to add identity rings. Needs minimap2, and "
-        "needs you to already have the answer",
+        help="a reference FASTA, for identity rings and the dotplot. Needs "
+        "minimap2, and needs you to already have the answer",
     )
-    cp.add_argument(
+
+    look = pl.add_argument_group("how it looks")
+    look.add_argument(
+        "--theme",
+        default="light",
+        choices=["light", "dark", "print"],
+        help="print is greyscale, for a journal (default: light)",
+    )
+    look.add_argument(
+        "--format",
+        dest="image_format",
+        default="png",
+        choices=["png", "svg", "pdf"],
+        help="svg and pdf stay sharp at any size (default: png)",
+    )
+    look.add_argument("--dpi", type=int, default=150, help="for png (default: 150)")
+    look.add_argument("--title", default="", help="your own title instead of the filename")
+    look.add_argument("--no-legend", action="store_true", help="drop the legend")
+    look.add_argument(
+        "--figsize",
+        help="width,height in inches, for example 12,8. The default fits the content",
+    )
+
+    circ = pl.add_argument_group("circles")
+    circ.add_argument(
+        "--rings",
+        help="comma separated subset of: "
+        "gc, skew, cumulative, depth, identity, missing. Default is all of them",
+    )
+    circ.add_argument(
         "-w",
         "--window",
         type=int,
-        help="window size in bp. The default aims for about 360 windows, "
-        "whatever the element's length",
+        help="window size in bp. The default aims for a few hundred windows "
+        "whatever the length",
     )
-    cp.add_argument(
+    circ.add_argument(
+        "--only-circular",
+        action="store_true",
+        help="skip anything not marked circular",
+    )
+    circ.add_argument(
+        "--min-length", type=int, default=100, help="skip anything shorter (default: 100)"
+    )
+
+    karyo = pl.add_argument_group("karyotype")
+    karyo.add_argument(
+        "--colour-by",
+        default="gc",
+        choices=["gc", "depth", "shape", "none"],
+        help="what shades the bars. depth needs reads (default: gc)",
+    )
+    karyo.add_argument(
+        "--max-contigs", type=int, default=40, help="draw the largest this many (default: 40)"
+    )
+    karyo.add_argument(
+        "--sort-by", default="length", choices=["length", "name"], help="(default: length)"
+    )
+    karyo.add_argument(
+        "--highlight", nargs="*", default=[], help="contig names to outline and bold"
+    )
+
+    other = pl.add_argument_group("dotplot, coverage and contiguity")
+    other.add_argument(
+        "--min-block",
+        type=int,
+        default=200,
+        help="shortest alignment to draw in a dotplot (default: 200)",
+    )
+    other.add_argument(
+        "--log-depth", action="store_true", help="log scale on the coverage plot"
+    )
+    other.add_argument(
+        "--compare",
+        nargs="*",
+        default=[],
+        help="more assemblies to put on the contiguity curve",
+    )
+
+    pl.add_argument(
         "-t", "--threads", type=int, default=4, help="CPU threads to use (default: 4)"
     )
-    cp.add_argument(
+    pl.add_argument(
         "--read-type",
         default="ont",
         choices=["ont", "pacbio", "hifi"],
         help="what kind of long reads (default: ont)",
     )
+
+    # --- circleplot, kept as the older name for plot --kind circle ---
+    cp = sub.add_parser("circleplot", help="the same as: plot --kind circle")
+    cp.add_argument("fasta")
+    cp.add_argument("-o", "--outdir", default="figures")
+    cp.add_argument("-l", "--long", nargs="*", default=[])
+    cp.add_argument("-r", "--reference")
+    cp.add_argument("-w", "--window", type=int)
+    cp.add_argument("-t", "--threads", type=int, default=4)
+    cp.add_argument("--read-type", default="ont", choices=["ont", "pacbio", "hifi"])
+    cp.add_argument("--theme", default="light", choices=["light", "dark", "print"])
+    cp.add_argument("--rings")
+    cp.add_argument("--format", dest="image_format", default="png", choices=["png", "svg", "pdf"])
+    cp.add_argument("--dpi", type=int, default=150)
+    cp.add_argument("--no-legend", action="store_true")
+    cp.add_argument("--only-circular", action="store_true")
+    cp.add_argument("--min-length", type=int, default=100)
+    cp.add_argument("--title", default="")
 
     return parser
 
@@ -178,6 +299,9 @@ def _cmd_assemble(args) -> int:
         polish_rounds=args.polish_rounds,
         skip_nuclear=args.skip_nuclear,
         skip_polish=args.skip_polish,
+        plots=args.plots,
+        plot_theme=args.plot_theme,
+        plot_format=args.plot_format,
     )
     run(args.long, args.short, settings)
     return 0
@@ -237,38 +361,150 @@ def _cmd_stats(args) -> int:
     return 0
 
 
-def _cmd_circleplot(args) -> int:
-    from . import circleplot
+def _has_circular(fasta: Path) -> bool:
+    from .seqio import read_sequences
+
+    return any("circular" in r.name.lower() for r in read_sequences(fasta))
+
+
+def _cmd_plot(args) -> int:
+    from . import circleplot, plots
     from .pipeline import load_reads
 
+    fasta = Path(args.fasta)
+    outdir = Path(args.outdir)
     reads = load_reads(args.long) if args.long else None
     if args.long and not reads:
-        print("No reads were loaded, so the depth ring is skipped.", file=sys.stderr)
+        print("No reads were loaded, so anything needing them is skipped.", file=sys.stderr)
         reads = None
+    reference = Path(args.reference) if getattr(args, "reference", None) else None
+    rings = [r.strip() for r in args.rings.split(",")] if getattr(args, "rings", None) else None
+    figsize = None
+    if getattr(args, "figsize", None):
+        try:
+            w, h = (float(v) for v in args.figsize.split(","))
+            figsize = (w, h)
+        except ValueError:
+            print("--figsize wants two numbers, like 12,8", file=sys.stderr)
+            return 2
 
-    if args.reference and not circleplot.have("minimap2"):
-        print(
-            "minimap2 is not installed, so the reference rings are skipped.",
-            file=sys.stderr,
-        )
+    kind = getattr(args, "kind", "circle")
+    if kind == "auto":
+        kind = "circle" if _has_circular(fasta) else "karyotype"
+    kinds = ["circle", "karyotype", "dotplot", "coverage", "nx"] if kind == "all" else [kind]
 
-    written = circleplot.plot_all(
-        Path(args.fasta),
-        Path(args.outdir),
-        reads=reads,
-        reference=Path(args.reference) if args.reference else None,
-        read_type=args.read_type,
-        threads=args.threads,
-        window=args.window,
-    )
+    written: list[Path] = []
+    for which in kinds:
+        try:
+            if which == "circle":
+                written += circleplot.plot_all(
+                    fasta,
+                    outdir,
+                    reads=reads,
+                    reference=reference,
+                    read_type=args.read_type,
+                    threads=args.threads,
+                    window=getattr(args, "window", None),
+                    rings=rings,
+                    theme_name=args.theme,
+                    legend=not args.no_legend,
+                    image_format=args.image_format,
+                    dpi=args.dpi,
+                    only_circular=getattr(args, "only_circular", False),
+                    min_length=getattr(args, "min_length", 100),
+                )
+            elif which == "karyotype":
+                written.append(
+                    plots.karyotype(
+                        fasta,
+                        outdir / f"karyotype.{args.image_format}",
+                        colour_by=args.colour_by,
+                        reads=reads,
+                        max_contigs=args.max_contigs,
+                        min_length=args.min_length,
+                        sort_by=args.sort_by,
+                        highlight=args.highlight,
+                        theme_name=args.theme,
+                        title=args.title,
+                        window=getattr(args, "window", None),
+                        read_type=args.read_type,
+                        threads=args.threads,
+                        figsize=figsize,
+                        dpi=args.dpi,
+                    )
+                )
+            elif which == "dotplot":
+                made = plots.dotplot(
+                    fasta,
+                    outdir / f"dotplot.{args.image_format}",
+                    reference=reference,
+                    min_block=args.min_block,
+                    theme_name=args.theme,
+                    title=args.title,
+                    threads=args.threads,
+                    dpi=args.dpi,
+                    figsize=figsize or (8.0, 8.0),
+                )
+                if made is None:
+                    print("dotplot: nothing aligned, or minimap2 is missing.", file=sys.stderr)
+                else:
+                    written.append(made)
+            elif which == "coverage":
+                if not reads:
+                    print("coverage needs reads. Pass --long.", file=sys.stderr)
+                    continue
+                made = plots.coverage_plot(
+                    fasta,
+                    reads,
+                    outdir / f"coverage.{args.image_format}",
+                    window=getattr(args, "window", None),
+                    theme_name=args.theme,
+                    title=args.title,
+                    read_type=args.read_type,
+                    threads=args.threads,
+                    dpi=args.dpi,
+                    log_scale=args.log_depth,
+                )
+                if made is None:
+                    print("coverage: nothing mapped, or minimap2 is missing.", file=sys.stderr)
+                else:
+                    written.append(made)
+            elif which == "nx":
+                compare = {Path(c).stem: Path(c) for c in getattr(args, "compare", [])}
+                written.append(
+                    plots.nx_curve(
+                        fasta,
+                        outdir / f"contiguity.{args.image_format}",
+                        compare=compare or None,
+                        theme_name=args.theme,
+                        title=args.title,
+                        figsize=figsize or (8.0, 5.0),
+                        dpi=args.dpi,
+                    )
+                )
+        except ValueError as exc:
+            print(f"{which}: {exc}", file=sys.stderr)
+
     if not written:
-        print("Nothing in that file was long enough to draw.", file=sys.stderr)
+        print("Nothing was drawn.", file=sys.stderr)
         return 1
     for path in written:
         print(f"wrote {path}")
-    mode = "reference based" if args.reference else "reference free"
-    print(f"\n{len(written)} picture(s), {mode}.")
+    print(f"\n{len(written)} picture(s).")
     return 0
+
+
+def _cmd_circleplot(args) -> int:
+    args.kind = "circle"
+    args.colour_by = "gc"
+    args.max_contigs = 40
+    args.sort_by = "length"
+    args.highlight = []
+    args.min_block = 200
+    args.log_depth = False
+    args.compare = []
+    args.figsize = None
+    return _cmd_plot(args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -277,6 +513,7 @@ def main(argv: list[str] | None = None) -> int:
         "assemble": _cmd_assemble,
         "triage": _cmd_triage,
         "stats": _cmd_stats,
+        "plot": _cmd_plot,
         "circleplot": _cmd_circleplot,
     }
     try:
