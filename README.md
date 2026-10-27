@@ -1,6 +1,6 @@
 # nagasm
 
-A genome assembler built around the way Naegleria keeps its DNA.
+An assembly pipeline built around the way Naegleria keeps its DNA.
 
 Most assemblers assume that coverage is roughly even across a genome. Naegleria
 breaks that assumption, and it breaks it badly enough that general tools
@@ -47,7 +47,37 @@ related species and throw away whatever stuck. That works, but it needs you to
 already have the answer. If you are working on a new isolate, or a relative
 nobody has sequenced yet, there is no reference circle to map against.
 
-So this tool finds the compartments in the reads themselves.
+So this pipeline finds the compartments in the reads themselves.
+
+## What this is, and what it is not
+
+It is a pipeline, not a new assembler. The hard work of building chromosomes
+from reads is done by [Flye](https://github.com/fenderglass/Flye), or by SPAdes
+when you give it short reads, and the polishing is minimap2 and racon. Those
+tools are good and we are not trying to replace them.
+
+What the pipeline adds is everything that happens before and after them. It
+decides, with no reference, which reads belong to a separate molecule rather
+than to a chromosome. It assembles those small circles itself, because they are
+a different enough problem to be worth it. Then it checks whether the reads
+really support each element it reports, instead of assuming that deep sequence
+means a free molecule.
+
+Roughly, and counting lines of code that are not blank or comment:
+
+| | Lines | |
+|---|---|---|
+| Sorting reads into compartments | 454 | ours |
+| Assembling the small circles | 686 | ours |
+| Checking the reads support an element | 177 | ours |
+| A chromosome assembler, for reading | 176 | ours, and not competitive |
+| k-mer counting and sketching, in Rust | 804 | ours |
+| Handing nuclear reads to Flye or SPAdes | 244 | a wrapper |
+| Polishing with minimap2 and racon | 176 | a wrapper |
+
+So about 2,300 lines of method and about 420 lines of wrapper, plus the
+plumbing that reports it all. Useful to know before you decide whether to
+trust it, and useful to know which part to blame when something goes wrong.
 
 ## What is new here
 
@@ -501,8 +531,8 @@ src/nagasm/
 ├── triage.py      sorting reads into compartments. The heart of it
 ├── circular.py    our own assembler for the small circles
 ├── olc.py         our own assembler for chromosomes, for reading
-├── nuclear.py     handing the nuclear reads to Flye or SPAdes
-├── polish.py      minimap2 and racon, including the trick for circles
+├── nuclear.py     a wrapper. Hands the nuclear reads to Flye or SPAdes
+├── polish.py      a wrapper. minimap2 and racon, with the trick for circles
 ├── support.py     asking whether an element is really a separate molecule
 ├── stats.py       N50 and friends
 ├── report.py      figures and the written report

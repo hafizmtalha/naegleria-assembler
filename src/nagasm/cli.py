@@ -42,10 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nagasm",
         description=(
-            "A genome assembler built around the way Naegleria keeps its DNA. It "
-            "sorts reads into compartments by depth before assembling anything, so "
-            "that the small circles held in thousands of copies do not wreck the "
-            "assembly of the chromosomes."
+            "An assembly pipeline built around the way Naegleria keeps its DNA. "
+            "It sorts reads into compartments by depth before assembling "
+            "anything, so that the small circles held in thousands of copies do "
+            "not wreck the assembly of the chromosomes. Chromosomes go to Flye or "
+            "SPAdes. The sorting, the small circles and the read support check "
+            "are its own."
         ),
     )
     parser.add_argument("--version", action="version", version=f"nagasm {__version__}")

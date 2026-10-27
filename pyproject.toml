@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "nagasm"
 version = "0.1.0"
-description = "A genome assembler built around the way Naegleria keeps its DNA"
+description = "An assembly pipeline built around the way Naegleria keeps its DNA"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
