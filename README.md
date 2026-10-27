@@ -702,6 +702,17 @@ Every kind takes these.
 | `--window` | window size in bp, for the circles and coverage |
 | `--threads` | for anything that runs minimap2 |
 
+**Elements that failed the support check are still drawn**, because they are
+still reported. Their title turns red and carries the reason, so a handsome
+circle cannot be mistaken for a real one.
+
+![A rejected element, drawn with its verdict on it](docs/figures/rejected_element_example.png)
+
+That one is a chromosomal repeat out of a real E. coli run. It closes into a
+tidy circle and every base of it is covered. Only the reads give it away. Drawing them is deliberate: a tool
+that quietly hides its doubtful findings is worse than one that hands them to
+you with the verdict written on the front.
+
 **What a picture cannot do.** The circles and the coverage plot are drawn from
 the same alignments the support check uses, so a plot that looks beautiful is
 not independent evidence that an element is real. Read the containment number
@@ -845,7 +856,7 @@ rust/src/
 
 ## Tests
 
-119 Python tests and 18 Rust tests. They take about twenty seconds.
+124 Python tests and 18 Rust tests. They take about twenty seconds.
 
 ```bash
 pytest
@@ -858,7 +869,7 @@ cd rust && cargo test --no-default-features
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
 | `test_triage.py` | 20 | finding compartments, and refusing to invent them |
 | `test_plots.py` | 18 | the numbers behind karyotypes, dotplots and coverage |
-| `test_circleplot.py` | 13 | the ring values behind the circular pictures |
+| `test_circleplot.py` | 18 | the ring values behind the circular pictures |
 | `test_olc.py` | 9 | the chromosome assembler, on clean data |
 | `test_support.py` | 7 | telling a real element from a chromosomal repeat |
 

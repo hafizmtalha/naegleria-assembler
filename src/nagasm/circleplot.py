@@ -485,9 +485,20 @@ def plot_circle(
     caption = f"{heading}\n{length:,} bp, {shape}, {window:,} bp windows"
     if start:
         caption += f", rotated to start at {start:,}"
+    # A rejected element is still drawn, because it is still reported, but the
+    # whole title turns the warning colour so nobody mistakes it for one that
+    # passed. Colouring only the warning line meant placing a second text box
+    # by hand, and it landed on top of the title.
+    failed = note.upper().startswith("NOT SUPPORTED")
     if note:
         caption += f"\n{note}"
-    ax.set_title(caption, fontsize=11, pad=24, color=t["fg"])
+    ax.set_title(
+        caption,
+        fontsize=11,
+        pad=24,
+        color=_COLOURS[1] if failed else t["fg"],
+        fontweight="bold" if failed else "normal",
+    )
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -517,8 +528,16 @@ def plot_all(
     dpi: int = 150,
     only_circular: bool = False,
     min_length: int = 100,
+    notes: dict[str, str] | None = None,
 ) -> list[Path]:
-    """Draw every element in a FASTA file, one picture each."""
+    """Draw every element in a FASTA file, one picture each.
+
+    `notes` carries a line to print under the title, keyed by element name.
+    The pipeline uses it to say on the face of the picture when an element
+    failed the read support check, because a rejected artefact still gets
+    drawn and a beautiful circle with nothing written on it is exactly how
+    someone ends up believing in one.
+    """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     written = []
@@ -543,6 +562,7 @@ def plot_all(
                 theme_name=theme_name,
                 legend=legend,
                 dpi=dpi,
+                note=(notes or {}).get(record.name, ""),
             )
         )
     return written

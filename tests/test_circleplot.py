@@ -172,3 +172,52 @@ def test_no_reference_match_is_an_answer_not_a_crash(tmp_path):
 
 def test_depth_ring_without_minimap2_or_reads_is_skipped_quietly():
     assert circleplot.read_depth("ACGT" * 500, [], window=100) is None
+
+
+def test_a_rejected_element_is_drawn_with_the_reason_on_it(tmp_path):
+    # An element that failed the support check is still drawn, because it is
+    # still reported. The picture has to say so, or a handsome circle is
+    # exactly how someone ends up believing in an artefact.
+    rng = random.Random(41)
+    fasta = tmp_path / "e.fasta"
+    write_fasta(
+        fasta,
+        [
+            Record("good_circular", random_sequence(3_000, rng)),
+            Record("bad_circular", random_sequence(3_000, rng)),
+        ],
+    )
+    warning = "NOT SUPPORTED BY THE READS, only 10% of each read lies inside it"
+    written = circleplot.plot_all(fasta, tmp_path / "out", notes={"bad_circular": warning})
+    assert len(written) == 2, "a rejected element must still be drawn, not dropped"
+
+
+def test_a_note_is_optional(tmp_path):
+    rng = random.Random(43)
+    fasta = tmp_path / "e.fasta"
+    write_fasta(fasta, [Record("plain_circular", random_sequence(2_500, rng))])
+    assert len(circleplot.plot_all(fasta, tmp_path / "out")) == 1
+
+
+def test_rings_can_be_narrowed_down(tmp_path):
+    rng = random.Random(47)
+    sequence = random_sequence(4_000, rng)
+    path = circleplot.plot_circle(
+        sequence, tmp_path / "c.png", rings=["gc"], legend=False
+    )
+    assert path.exists()
+
+
+def test_asking_for_no_rings_at_all_is_refused(tmp_path):
+    rng = random.Random(53)
+    with pytest.raises(ValueError):
+        circleplot.plot_circle(
+            random_sequence(2_000, rng), tmp_path / "c.png", rings=["identity"]
+        )
+
+
+def test_a_circle_can_be_rotated(tmp_path):
+    rng = random.Random(59)
+    sequence = random_sequence(4_000, rng)
+    path = circleplot.plot_circle(sequence, tmp_path / "c.png", start=1_500)
+    assert path.exists()

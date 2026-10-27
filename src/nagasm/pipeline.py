@@ -433,14 +433,14 @@ def run(
     outputs["report"] = report.write_report(payload, outdir / "report.md")
     log(f"Report written to {outputs['report']}.")
 
-    drawn = _draw_plots(settings, outdir, outputs, triage_reads, log)
+    drawn = _draw_plots(settings, outdir, outputs, payload, triage_reads, log)
     if drawn:
         outputs["plots"] = drawn
 
     return RunResult(settings=settings, payload=payload, outputs=outputs)
 
 
-def _draw_plots(settings, outdir: Path, outputs: dict, reads, log) -> list[Path]:
+def _draw_plots(settings, outdir: Path, outputs: dict, payload: dict, reads, log) -> list[Path]:
     """Draw the obvious pictures once the assembly is done.
 
     This runs by default, because the pictures are what most people want and
@@ -464,11 +464,24 @@ def _draw_plots(settings, outdir: Path, outputs: dict, reads, log) -> list[Path]
     everything = settings.plots == "all"
     drawn: list[Path] = []
 
+    # An element that failed the support check is still drawn, because it is
+    # still reported, but the picture has to say so on its face.
+    notes = {}
+    for element in payload.get("elements", []):
+        if element.get("supported", True):
+            continue
+        contained = element.get("support", {}).get("contained")
+        warning = "NOT SUPPORTED BY THE READS"
+        if contained is not None:
+            warning += f", only {contained:.0%} of each read lies inside it"
+        notes[element["name"]] = warning
+
     try:
         if elements and Path(elements).exists():
             drawn += circleplot.plot_all(
                 Path(elements),
                 figures,
+                notes=notes,
                 reads=reads if everything else None,
                 read_type=settings.read_type,
                 threads=settings.threads,
