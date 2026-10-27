@@ -115,6 +115,46 @@ def build_parser() -> argparse.ArgumentParser:
     st = sub.add_parser("stats", help="describe an assembly that already exists")
     st.add_argument("fasta", help="an assembly in FASTA")
 
+    # --- circleplot ---
+    # Optional. Nothing in the assembly depends on it.
+    cp = sub.add_parser(
+        "circleplot",
+        help="draw circular genome plots for assembled elements (optional)",
+    )
+    cp.add_argument("fasta", help="elements to draw, FASTA. Each one gets its own picture")
+    cp.add_argument(
+        "-o", "--outdir", default="figures", help="where to write the pictures (default: figures)"
+    )
+    cp.add_argument(
+        "-l",
+        "--long",
+        nargs="*",
+        default=[],
+        help="reads, to add a depth ring. Reference free, and the honest option",
+    )
+    cp.add_argument(
+        "-r",
+        "--reference",
+        help="a reference FASTA, to add identity rings. Needs minimap2, and "
+        "needs you to already have the answer",
+    )
+    cp.add_argument(
+        "-w",
+        "--window",
+        type=int,
+        help="window size in bp. The default aims for about 360 windows, "
+        "whatever the element's length",
+    )
+    cp.add_argument(
+        "-t", "--threads", type=int, default=4, help="CPU threads to use (default: 4)"
+    )
+    cp.add_argument(
+        "--read-type",
+        default="ont",
+        choices=["ont", "pacbio", "hifi"],
+        help="what kind of long reads (default: ont)",
+    )
+
     return parser
 
 
@@ -197,12 +237,47 @@ def _cmd_stats(args) -> int:
     return 0
 
 
+def _cmd_circleplot(args) -> int:
+    from . import circleplot
+    from .pipeline import load_reads
+
+    reads = load_reads(args.long) if args.long else None
+    if args.long and not reads:
+        print("No reads were loaded, so the depth ring is skipped.", file=sys.stderr)
+        reads = None
+
+    if args.reference and not circleplot.have("minimap2"):
+        print(
+            "minimap2 is not installed, so the reference rings are skipped.",
+            file=sys.stderr,
+        )
+
+    written = circleplot.plot_all(
+        Path(args.fasta),
+        Path(args.outdir),
+        reads=reads,
+        reference=Path(args.reference) if args.reference else None,
+        read_type=args.read_type,
+        threads=args.threads,
+        window=args.window,
+    )
+    if not written:
+        print("Nothing in that file was long enough to draw.", file=sys.stderr)
+        return 1
+    for path in written:
+        print(f"wrote {path}")
+    mode = "reference based" if args.reference else "reference free"
+    print(f"\n{len(written)} picture(s), {mode}.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     handlers = {
         "assemble": _cmd_assemble,
         "triage": _cmd_triage,
         "stats": _cmd_stats,
+        "circleplot": _cmd_circleplot,
     }
     try:
         return handlers[args.command](args)

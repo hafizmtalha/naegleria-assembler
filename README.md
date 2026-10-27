@@ -79,7 +79,56 @@ So about 2,300 lines of method and about 420 lines of wrapper, plus the
 plumbing that reports it all. Useful to know before you decide whether to
 trust it, and useful to know which part to blame when something goes wrong.
 
-## What is new here
+## The question it answers
+
+One question, asked before anything is assembled:
+
+> **Which of these reads come from a molecule that is not the chromosome, and
+> which only look that way?**
+
+Everything else follows from that. If you can answer it with no reference, you
+can pull a mitochondrion and an rDNA circle out of a new isolate nobody has
+sequenced. If you answer it badly, you either leave those circles in and let
+them wreck the chromosome assembly, or you take out real chromosomal sequence
+and quietly damage the result.
+
+The second half of that question is the part most tools skip, and it is where
+we were wrong for a while. Deep sequence is not always a separate molecule. In
+a bacterium it is usually a repeat sitting inside the chromosome. So the
+pipeline now asks the question twice, once from the reads before assembly and
+once from the assembled element afterwards, and only an element that passes
+both is allowed to take its reads out of the main pile.
+
+Two questions it does **not** answer, said plainly so you do not expect them:
+
+* **What is this element?** It will not tell you that a circle is a plasmid or
+  a virus or a mitochondrion. It reports the sequence and the evidence. You do
+  the annotating.
+* **Is my assembly better than Flye's?** The chromosome assembly *is* Flye.
+  The claim is about what happens either side of it.
+
+## What makes it different
+
+Four things, and the fourth is the one that took real work.
+
+1. **It sorts reads before assembling, with no reference.** The usual way to
+   get an organelle out of a read set is to map against a known one from a
+   relative and keep what sticks. That needs you to already have the answer.
+   This finds the compartments in the depth spectrum of the reads themselves.
+2. **Each compartment gets the assembler it deserves.** Small circles go to our
+   own assembler, which closes them and rotates them to a fixed start.
+   Chromosomes go to Flye. One tool doing both jobs does neither well.
+3. **It works in log space.** An rDNA circle at 4,000 copies and a chromosome
+   at 20 times sit in the same histogram. On a linear axis the chromosome is
+   the only thing you can see.
+4. **It checks its own answers.** Every element it reports is measured back
+   against the reads, and the number that does the work is how much of each
+   supporting read lies inside the element. This is what separates a free
+   circle from a chromosomal repeat, and it is the reason the bacterial runs
+   are trustworthy. The details, and the honest account of which parts of the
+   idea are borrowed, are in the bacterial section below.
+
+## How it works, in more detail
 
 ### 1. Sorting reads by depth, with no reference
 
@@ -460,6 +509,87 @@ There is a Snakemake workflow too, if you prefer one.
 snakemake --cores 8
 ```
 
+### Circular genome plots, optional
+
+An extra module that draws a circular element as a circle. Nothing in the
+assembly depends on it and you can ignore it entirely.
+
+```bash
+# reference free. Everything drawn comes from the element itself
+nagasm circleplot results/assembly/high_copy_elements.fasta -o figures
+
+# add a read depth ring, still reference free
+nagasm circleplot results/assembly/high_copy_elements.fasta -o figures \
+  --long reads.fastq.gz --threads 8
+
+# reference based. Adds identity rings against a reference you supply
+nagasm circleplot results/assembly/high_copy_elements.fasta -o figures \
+  --reference known_plasmids.fna --threads 8
+```
+
+One picture per sequence in the file. The rings run from the outside in.
+
+| Ring | Mode | What it shows |
+|---|---|---|
+| GC content | reference free | GC in each window, drawn against the element's own mean |
+| GC skew | reference free | (G-C)/(G+C), drawn around zero |
+| Cumulative GC skew | reference free | the running total, with the peak and trough marked |
+| Read depth | reference free, needs reads | coverage in each window, around the mean |
+| Identity to reference | reference based | red for low identity, green for high |
+| Not in reference | reference based | windows with no alignment at all |
+
+**Which mode to use.** Reference free is the one that matches the rest of the
+pipeline, since it works on an isolate nobody has sequenced. Cumulative GC skew
+is the ring worth looking at, because a replicon that is genuinely replicated
+usually turns once at the origin and once at the terminus, giving two halves. A
+collapsed repeat tends to show nothing of the sort.
+
+Reference based answers a different question, which is not whether your circle
+is real but how it differs from one already published. It needs minimap2 and it
+needs you to have the answer already, so it is for a write up rather than for
+discovery.
+
+**What the picture cannot do.** It is drawn from the same alignments the support
+check uses, so a plot that looks beautiful is not independent evidence that the
+element is real. Read the containment number next to it. The plot is for showing
+someone else what you found, and for catching the case where the numbers look
+fine and the structure does not.
+
+Below is the E. coli plasmid p4 we recovered, drawn against the finished
+reference for that same sample.
+
+![Circular plot of a recovered plasmid](docs/figures/circleplot_example.png)
+
+The inner ring is the useful part. It is split between a stretch matching the
+reference at 99.9 percent and a stretch at 92 percent, which is real structure
+that a single average identity figure would have hidden completely.
+
+### Memory and runtime
+
+Measured on an 8 core machine, not estimated. Peak resident memory for the
+sorting step, which is the part of the pipeline we wrote and the part that holds
+every read in memory at once:
+
+| Read set | Bases | `--scale` | Peak memory | Time |
+|---|---|---|---|---|
+| Naegleria ONT | 0.63 Gb | 100 | 2.1 GB | 12 s |
+| Naegleria ONT | 0.63 Gb | 20 | 2.6 GB | 13 s |
+| Naegleria ONT | 0.63 Gb | 1 | 7.2 GB | 155 s |
+| E. coli ONT | 0.45 Gb | 20 | 2.0 GB | 6 s |
+
+The rule of thumb is about **4 bytes of memory per base of input** at
+`--scale 20`. At `--scale 1`, which keeps every k-mer, it is nearer 11 bytes per
+base and about twelve times slower, which is why the default does not do that.
+
+Flye is separate and reports its own peak. On the Naegleria nuclear assembly,
+0.63 Gb of reads over a 29.5 Mb genome, its log recorded a peak of 3 GB. So for
+a run of that size, **8 GB of RAM is comfortable and 4 GB is tight**. Scale up
+roughly with the size of your read set, not with the size of your genome.
+
+Two ways to use less. Raise `--scale`, which keeps fewer k-mers and costs you
+sensitivity on small elements, since that is what hid the rDNA circle. Or pass
+`--memory`, which is handed to Flye and does not change the sorting step.
+
 ## What you get
 
 ```
@@ -474,6 +604,28 @@ results/
     ├── reads_depth_vs_gc.png     every read as a dot
     └── read_lengths.png          read length by compartment
 ```
+
+Circular plots are not written by `assemble`. Run `nagasm circleplot` on
+`assembly/high_copy_elements.fasta` when you want them, since they are optional
+and some of them need minimap2.
+
+Every element in `summary.json` carries its own verdict:
+
+```json
+{
+  "name": "deep_element_2_circular",
+  "length": 6626,
+  "is_circular": true,
+  "supported": true,
+  "support": {"n_reads": 5161, "depth": 2441.39, "contained": 0.623, "measured": true}
+}
+```
+
+`supported: false` means the reads do not back it up and the reason is written
+out in `notes`. Those elements are still reported, and still written to the
+FASTA, because a tool that silently drops findings is worse than one that hands
+you a doubtful result with the numbers attached. They are simply not allowed to
+take reads away from the main assembly.
 
 ## Settings worth knowing
 
@@ -534,6 +686,7 @@ src/nagasm/
 ├── nuclear.py     a wrapper. Hands the nuclear reads to Flye or SPAdes
 ├── polish.py      a wrapper. minimap2 and racon, with the trick for circles
 ├── support.py     asking whether an element is really a separate molecule
+├── circleplot.py  optional. Circular genome pictures, nothing depends on it
 ├── stats.py       N50 and friends
 ├── report.py      figures and the written report
 └── pipeline.py    the order the steps happen in
@@ -544,17 +697,74 @@ rust/src/
 └── sketch.rs      anchors, and where two reads line up
 ```
 
-There are 88 Python tests and 18 Rust tests.
+## Tests
+
+101 Python tests and 18 Rust tests. They take about twenty seconds.
 
 ```bash
 pytest
 cd rust && cargo test --no-default-features
 ```
 
-Quite a few of those tests exist because the code failed them while it was being
-written. Three of the bugs produced assemblies that looked entirely reasonable in
-the summary numbers and were noise underneath, so those have tests that check the
-sequence against a known answer rather than just its length.
+| File | Tests | What it covers |
+|---|---|---|
+| `test_circular.py` | 24 | closing circles, rotating to a fixed start, overlaps |
+| `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
+| `test_triage.py` | 20 | finding compartments, and refusing to invent them |
+| `test_circleplot.py` | 13 | the ring values behind the optional pictures |
+| `test_olc.py` | 9 | the chromosome assembler, on clean data |
+| `test_support.py` | 7 | telling a real element from a chromosomal repeat |
+
+Tests that need minimap2 skip themselves when it is missing, rather than fail.
+
+**The ones worth knowing about.** Quite a few of these exist because the code
+failed them while it was being written, and three of them guard bugs that made
+assemblies which looked entirely reasonable in the summary numbers and were
+noise underneath. Those check the sequence against a known answer rather than
+just its length.
+
+The sharpest example is `test_sequence_stitched_from_a_repeat_is_rejected`. It
+builds a synthetic chromosome holding eight copies of one 3 kb repeat, samples
+reads from it, then asks the support check whether that repeat is a separate
+molecule. The honest answer is no. That test failed the first version of the
+containment metric, which scored the repeat at 0.77 contained and happily
+accepted it, and failing is what showed the metric was normalising by the wrong
+length. It is the reason the current version divides by the full read length.
+
+A plot test is easy to write badly, so `test_circleplot.py` checks the numbers
+behind each ring rather than the picture. A ring drawn smoothly from wrong
+values looks perfectly fine and tells you a lie.
+
+### The worked examples
+
+Two kinds, and both matter for different reasons.
+
+**Synthetic, where the truth is known.** A read set shaped like a Naegleria
+library, with a chromosome at ordinary depth and two circles far above it, run
+through the whole pipeline end to end. Every read landed in the right
+compartment and all three sequences came back at over 99.4 percent identity.
+The numbers are in [on data where we know the answer](#on-data-where-we-know-the-answer).
+
+**Real, where the truth is published.** Three organisms with finished
+assemblies to check against. Naegleria for the mitochondrion, the rDNA circle
+and the nuclear genome, then Klebsiella and E. coli, where every replicon in
+the reference is closed. The bacterial pair is what turned up three bugs that
+Naegleria data had hidden completely, so they are now the test that matters
+most before any change to the sorting or the support check.
+
+To reproduce the bacterial runs, fetch a read set with a finished assembly for
+the same sample, then:
+
+```bash
+nagasm assemble -l reads.fastq.gz -o out -t 8 --scale 20 \
+  --read-type ont --mode long_then_polish
+minimap2 -x asm10 reference.fna out/assembly/nuclear.fasta
+```
+
+Check two things in `out/summary.json`. That every replicon in the reference is
+covered, and that `supported` is false for the elements that are really
+chromosomal repeats. An element reported with `supported: false` is the check
+working, not the run failing.
 
 ## Reading the numbers
 
