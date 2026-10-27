@@ -64,6 +64,19 @@ nuclear:
 polish:
   rounds: 2
 
+# --- Gene content, optional --------------------------------------------------
+# Off by default. BUSCO is not in environment.yml, and it downloads its lineage
+# the first time it runs, which is the only step here that needs the network.
+# Install it with environment-busco.yml. See the README.
+busco:
+  # A BUSCO lineage name, for example eukaryota_odb10. Leave empty to skip the
+  # check entirely. Only the nuclear contigs are ever scored, on purpose.
+  lineage: ""
+
+  # A folder that already holds the lineage, which runs BUSCO offline. Leave
+  # empty to let it download.
+  download_path: ""
+
 # --- Resources --------------------------------------------------------------
 threads: 8
 memory_gb: 12

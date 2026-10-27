@@ -95,6 +95,16 @@ rule assemble:
         min_contig=config["nuclear"]["min_contig_bp"],
         rounds=config["polish"]["rounds"],
         memory=config["memory_gb"],
+        busco=(
+            "--busco " + config["busco"]["lineage"]
+            if config.get("busco", {}).get("lineage")
+            else ""
+        ),
+        busco_download=(
+            "--busco-download-path " + config["busco"]["download_path"]
+            if config.get("busco", {}).get("download_path")
+            else ""
+        ),
     threads: config["threads"]
     log:
         "logs/assemble.log",
@@ -113,6 +123,8 @@ rule assemble:
             {params.mode} \
             --min-contig {params.min_contig} \
             --polish-rounds {params.rounds} \
+            {params.busco} \
+            {params.busco_download} \
             > {log} 2>&1
         """
 

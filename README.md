@@ -74,8 +74,9 @@ Roughly, and counting lines of code that are not blank or comment:
 | k-mer counting and sketching, in Rust | 804 | ours |
 | Handing nuclear reads to Flye or SPAdes | 244 | a wrapper |
 | Polishing with minimap2 and racon | 176 | a wrapper |
+| Scoring gene content with BUSCO | 297 | a wrapper, and optional |
 
-So about 2,300 lines of method and about 420 lines of wrapper, plus the
+So about 2,300 lines of method and about 720 lines of wrapper, plus the
 plumbing that reports it all. Useful to know before you decide whether to
 trust it, and useful to know which part to blame when something goes wrong.
 
@@ -719,6 +720,102 @@ not independent evidence that an element is real. Read the containment number
 next to it. These are for showing someone else what you found, and for catching
 the case where the numbers look fine and the structure does not.
 
+### Gene content, with BUSCO
+
+Optional, like the pictures, and off unless you ask for it.
+
+Everything else here measures the **shape** of an assembly. How long the pieces
+are, how deep the reads sit on them, whether a circle closes, whether the reads
+that support an element really lie inside it. None of that looks at genes, and an
+assembly can be long, well supported and badly incomplete all at once.
+
+The gap matters because of one failure mode in particular. An assembler that
+collapses a repeat family produces fewer, longer contigs and a **better** N50
+while quietly losing sequence. Contiguity goes up, completeness goes down. Only a
+check against genes every member of a group is expected to carry will see it, so
+the two numbers moving in opposite directions is itself the finding.
+
+BUSCO already does that job well, so we hand it over rather than reinvent it.
+
+```bash
+# during a run
+nagasm assemble -l reads.fastq.gz -o results -t 8 --busco eukaryota_odb10
+
+# or on an assembly you already have
+nagasm completeness results/assembly/nuclear.fasta -l eukaryota_odb10 -t 8
+
+# which lineages are worth trying
+nagasm completeness --lineages
+```
+
+Install it separately, because it is not in `environment.yml`:
+
+```bash
+mamba env create -f environment-busco.yml
+```
+
+#### Three things that decide whether the number means anything
+
+**It scores the nuclear contigs, nothing else.** BUSCO markers are single copy
+nuclear genes. The high copy elements are not supposed to carry them. Point BUSCO
+at the elements and the chromosomes together and any marker sitting on both comes
+back as duplicated, when the duplication is not a duplication at all, it is two
+kinds of DNA in one file. The pipeline only ever scores `nuclear.fasta`, the
+report says which file was scored, and the standalone command warns you if you
+hand it something else.
+
+**The lineage is a compromise on this organism.** Naegleria sits in
+Heterolobosea, inside Discoba, and BUSCO has no set anywhere near that close.
+`eukaryota_odb10` is the honest choice at about 255 markers shared across all
+eukaryotes, and it is coarse. A good score on 255 broad markers is weak evidence
+that a 30 Mb genome is complete, and the report phrases it that way instead of
+calling the assembly finished. The bacterial test case is the opposite: 124
+bacterial markers over 5 Mb, matched closely to the organism, which carries real
+weight. The report tells these two cases apart rather than calling both coarse.
+
+One more thing on lineages. BUSCO 6 ships newer `odb12` sets that score the same
+assembly differently from the `odb10` sets most papers quote. Neither is wrong,
+but they are not comparable, so say which you used.
+
+**It needs the network the first time.** BUSCO downloads its lineage on first
+run, and it is the only step in this pipeline that reaches outside the machine.
+That is the main reason it is off by default. Download once, then work offline:
+
+```bash
+busco --download eukaryota_odb10
+nagasm assemble ... --busco eukaryota_odb10 --busco-download-path busco_downloads
+```
+
+#### What it adds to the report
+
+A table of shares next to counts, BUSCO's own one line summary, and a few plain
+sentences about what the score shows. Shares alone invite two opposite mistakes,
+reading a high score as a finished genome and reading duplication as a fault when
+it is often the assembly telling you something true, so the notes say which case
+you are in. From a bacterial run:
+
+```
+## Gene content
+
+Scored with BUSCO against **bacteria_odb10**, 124 markers, on `nuclear.fasta`.
+
+| | Share | Count |
+|---|---|---|
+| Complete | 99.2% | 123 |
+| of those, single copy | 98.4% | 122 |
+| of those, duplicated | 0.8% | 1 |
+| Fragmented | 0.0% | 0 |
+| Missing | 0.8% | 1 |
+```
+
+Counts sit beside shares because 95% of 255 markers and 95% of 2,000 markers are
+not the same evidence.
+
+**It never fails the run.** A missing BUSCO, a lineage that will not download, a
+crash inside it: each ends as a note in the report. Losing a finished assembly to
+an optional quality check would be absurd. A failed check is reported as failed,
+and never as a score of 0%.
+
 ### Memory and runtime
 
 Measured on an 8 core machine, not estimated. Peak resident memory for the
@@ -754,10 +851,12 @@ results/
 ├── assembly/
 │   ├── high_copy_elements.fasta  the circles, each rotated to a fixed start
 │   └── nuclear.fasta             the chromosomes
-└── figures/
-    ├── depth_spectrum.png        the plot at the top of this page
-    ├── reads_depth_vs_gc.png     every read as a dot
-    └── read_lengths.png          read length by compartment
+├── figures/
+│   ├── depth_spectrum.png        the plot at the top of this page
+│   ├── reads_depth_vs_gc.png     every read as a dot
+│   └── read_lengths.png          read length by compartment
+└── completeness/                 only with --busco
+    └── nuclear/                  BUSCO's own output, untouched
 ```
 
 `assemble` also writes `figures/circle_*.png` for every circular element,
@@ -793,6 +892,10 @@ actually change the answer.
 | `scale` | 100 | Keep about one k-mer in this many. This is the memory knob. **Use 20 for noisy long reads.** See below. |
 | `k` | 21 | k-mer length for depth sorting. Drop it if your reads are very noisy. |
 | `deep_outlier_factor` | 4 | How many times deeper than the nuclear peak a read has to be before it is looked at on its own. This is what finds the rDNA. |
+
+Two more are off by default and change what you get rather than what it finds:
+`busco.lineage` turns on the gene content check, and `plots` decides what gets
+drawn when the run ends. Both are described above.
 
 The `scale` default is wrong for noisy reads and it is worth saying why, because
 it cost an evening to work out. At the default of 100, each read contributes only
@@ -856,7 +959,7 @@ rust/src/
 
 ## Tests
 
-124 Python tests and 18 Rust tests. They take about twenty seconds.
+150 Python tests and 18 Rust tests. They take about twenty seconds.
 
 ```bash
 pytest
@@ -865,15 +968,27 @@ cd rust && cargo test --no-default-features
 
 | File | Tests | What it covers |
 |---|---|---|
-| `test_circular.py` | 24 | closing circles, rotating to a fixed start, overlaps |
+| `test_circular.py` | 27 | closing circles, rotating to a fixed start, overlaps |
+| `test_completeness.py` | 26 | reading BUSCO's summary, and what the score means |
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
-| `test_triage.py` | 20 | finding compartments, and refusing to invent them |
+| `test_triage.py` | 22 | finding compartments, and refusing to invent them |
 | `test_plots.py` | 18 | the numbers behind karyotypes, dotplots and coverage |
 | `test_circleplot.py` | 18 | the ring values behind the circular pictures |
 | `test_olc.py` | 9 | the chromosome assembler, on clean data |
 | `test_support.py` | 7 | telling a real element from a chromosomal repeat |
 
 Tests that need minimap2 skip themselves when it is missing, rather than fail.
+
+**The BUSCO tests do not run BUSCO.** It is not installed in this environment and
+is not in `environment.yml`, so what they test is the part that can go wrong
+quietly: reading its summary. The fixtures are real BUSCO output in both shapes it
+writes, JSON and plain text, and the tests check that every number comes back. A
+parser that misses a field and returns a clean zero is worse than one that
+crashes, because 0.0% complete reads like a measurement. One test asserts that an
+unreadable summary comes back empty rather than full of zeros, and another that a
+failed check is reported as failed rather than as a score. What has **not** been
+verified end to end is BUSCO itself running inside the pipeline, since it is not
+installed here.
 
 **The ones worth knowing about.** Quite a few of these exist because the code
 failed them while it was being written, and three of them guard bugs that made

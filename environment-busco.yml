@@ -1,0 +1,43 @@
+# BUSCO, kept in its own environment on purpose.
+#
+# BUSCO is optional. Nothing in the assembly needs it, and it only runs when you
+# ask for it with --busco. It lives here rather than in environment.yml for two
+# reasons.
+#
+# First, it is heavy. It pulls in metaeuk, hmmer, sepp, bbmap and a stack of
+# their dependencies, and those have pinned requirements that argue with the ones
+# the assembler needs. Putting them in one environment means the solver either
+# takes a long time or quietly downgrades something the pipeline depends on.
+#
+# Second, it reaches out to the network. BUSCO downloads its lineage the first
+# time it runs. Everything else in this pipeline works offline, and that is worth
+# keeping true for the default install.
+#
+# Install:
+#     mamba env create -f environment-busco.yml
+#
+# Then either put it on PATH when you want the check:
+#     conda activate nagasm-busco && busco --version
+#     conda activate nagasm
+#     PATH="$CONDA_PREFIX/../nagasm-busco/bin:$PATH" nagasm assemble ... --busco eukaryota_odb10
+#
+# or run the standalone step from the busco environment against an assembly that
+# already exists, which is simpler:
+#     conda activate nagasm-busco
+#     busco -i results/assembly/nuclear.fasta -o nuclear -m genome -l eukaryota_odb10 -c 8
+#
+# To download a lineage once and then work offline:
+#     busco --download eukaryota_odb10
+#     nagasm assemble ... --busco eukaryota_odb10 --busco-download-path busco_downloads
+#
+# The sepp pin is not fussiness. BUSCO's own guide warns that sepp 4.5.6 is
+# incompatible with its automatic lineage files and silently picks the wrong
+# lineage, which is the worst kind of bug: it finishes, and the number is wrong.
+name: nagasm-busco
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - busco=6.0.0
+  - sepp=4.5.5

@@ -125,6 +125,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="svg and pdf stay sharp at any size (default: png)",
     )
 
+    qual = run.add_argument_group("gene content, optional and off by default")
+    qual.add_argument(
+        "--busco",
+        metavar="LINEAGE",
+        default=None,
+        help="score the nuclear contigs against a BUSCO lineage, for example "
+        "eukaryota_odb10 for Naegleria or bacteria_odb10 for the bacterial test "
+        "case. Off unless you ask, because BUSCO is not in environment.yml and "
+        "downloads its lineage the first time. nagasm completeness --lineages "
+        "lists the ones worth trying",
+    )
+    qual.add_argument(
+        "--busco-download-path",
+        metavar="DIR",
+        default=None,
+        help="a folder that already holds the lineage, which runs BUSCO offline",
+    )
+
     # --- triage ---
     tri = sub.add_parser(
         "triage",
@@ -276,6 +294,45 @@ def build_parser() -> argparse.ArgumentParser:
     cp.add_argument("--min-length", type=int, default=100)
     cp.add_argument("--title", default="")
 
+    # --- completeness ---
+    # Optional, like the plots. Nothing in the assembly depends on it.
+    comp = sub.add_parser(
+        "completeness",
+        help="score gene content with BUSCO (optional). Run it on the nuclear "
+        "contigs, not on the whole output",
+    )
+    comp.add_argument(
+        "fasta", nargs="?", help="the contigs to score, FASTA. Normally nuclear.fasta"
+    )
+    comp.add_argument(
+        "-l",
+        "--lineage",
+        default="eukaryota_odb10",
+        help="the BUSCO lineage (default: eukaryota_odb10)",
+    )
+    comp.add_argument(
+        "-o", "--outdir", default="completeness", help="where to put the results"
+    )
+    comp.add_argument("-t", "--threads", type=int, default=4)
+    comp.add_argument(
+        "-m",
+        "--mode",
+        default="genome",
+        choices=["genome", "transcriptome", "proteins"],
+        help="what the input is (default: genome)",
+    )
+    comp.add_argument(
+        "--download-path",
+        metavar="DIR",
+        default=None,
+        help="a folder that already holds the lineage, which runs BUSCO offline",
+    )
+    comp.add_argument(
+        "--lineages",
+        action="store_true",
+        help="list the lineages worth trying on this organism and exit",
+    )
+
     return parser
 
 
@@ -302,6 +359,8 @@ def _cmd_assemble(args) -> int:
         plots=args.plots,
         plot_theme=args.plot_theme,
         plot_format=args.plot_format,
+        busco=args.busco,
+        busco_download_path=args.busco_download_path,
     )
     run(args.long, args.short, settings)
     return 0
@@ -507,6 +566,57 @@ def _cmd_circleplot(args) -> int:
     return _cmd_plot(args)
 
 
+def _cmd_completeness(args) -> int:
+    from . import completeness as completeness_mod
+
+    if args.lineages:
+        print("Lineages worth trying. BUSCO has hundreds more.")
+        width = max(len(name) for name in completeness_mod.SUGGESTED_LINEAGES)
+        for name, what in completeness_mod.SUGGESTED_LINEAGES.items():
+            print(f"  {name:<{width}}  {what}")
+        print("\nThe full list: busco --list-datasets")
+        return 0
+
+    if not args.fasta:
+        print("Give a FASTA to score, or --lineages to see the choices.", file=sys.stderr)
+        return 2
+
+    path = Path(args.fasta)
+    if path.name != "nuclear.fasta" and args.mode == "genome":
+        # Worth saying out loud rather than quietly producing a number that reads
+        # like a whole-assembly score. See completeness.py for why.
+        print(
+            f"Note: scoring {path.name}. BUSCO markers are single copy nuclear genes, "
+            "so score the nuclear contigs on their own. Including the high copy "
+            "elements turns ordinary markers into false duplicates."
+        )
+
+    try:
+        result = completeness_mod.run_busco(
+            path,
+            Path(args.outdir),
+            lineage=args.lineage,
+            threads=args.threads,
+            mode=args.mode,
+            download_path=args.download_path,
+            name=path.stem,
+        )
+    except completeness_mod.BuscoMissing as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    for line in result.summary_lines():
+        print(line)
+    print()
+    for note in result.notes:
+        print(f"* {note}.")
+    print(f"\nBUSCO's own output is in {result.outdir}.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     handlers = {
@@ -515,6 +625,7 @@ def main(argv: list[str] | None = None) -> int:
         "stats": _cmd_stats,
         "plot": _cmd_plot,
         "circleplot": _cmd_circleplot,
+        "completeness": _cmd_completeness,
     }
     try:
         return handlers[args.command](args)

@@ -288,6 +288,44 @@ def write_report(payload: dict[str, Any], path: Path) -> Path:
             add(f"* {note}.")
         add("")
 
+    busco = payload.get("completeness")
+    if busco:
+        add("## Gene content")
+        add("")
+        if busco.get("error"):
+            add(
+                f"The completeness check was asked for but did not finish: "
+                f"{busco['error']}"
+            )
+            add("")
+        else:
+            add(
+                f"Scored with BUSCO against **{busco.get('lineage', 'an unnamed lineage')}**, "
+                f"{busco.get('n_markers', 0):,} markers, on `{busco.get('scored', 'the assembly')}`."
+            )
+            add("")
+            add("| | Share | Count |")
+            add("|---|---|---|")
+            rows = (
+                ("Complete", "complete_pct", "complete_n"),
+                ("of those, single copy", "single_pct", "single_n"),
+                ("of those, duplicated", "duplicated_pct", "duplicated_n"),
+                ("Fragmented", "fragmented_pct", "fragmented_n"),
+                ("Missing", "missing_pct", "missing_n"),
+            )
+            for label, pct_key, count_key in rows:
+                add(
+                    f"| {label} | {busco.get(pct_key, 0.0):.1f}% | "
+                    f"{busco.get(count_key, 0):,} |"
+                )
+            add("")
+            if busco.get("one_line"):
+                add(f"BUSCO's own one line summary: `{busco['one_line']}`")
+                add("")
+            for note in busco.get("notes", []):
+                add(f"* {note}.")
+            add("")
+
     add("## A note on reading these numbers")
     add("")
     add(

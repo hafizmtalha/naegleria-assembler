@@ -8,7 +8,8 @@ stating plainly:
 3. Assemble each high copy compartment on its own and close it into a circle.
 4. Assemble the nuclear compartment from what is left.
 5. Polish everything.
-6. Write the figures and the report.
+6. Score the nuclear contigs for gene content, if asked to.
+7. Write the figures and the report.
 
 Step 2 before step 4 is the whole idea. Doing it the other way round, or not at
 all, is what makes a general assembler struggle on this organism.
@@ -68,6 +69,12 @@ class Settings:
     plots: str = "auto"
     plot_theme: str = "light"
     plot_format: str = "png"
+    # Which BUSCO lineage to score the nuclear contigs against, or None to skip
+    # the check entirely, which is the default. It is off because BUSCO is not in
+    # environment.yml and because it downloads its lineage the first time, and
+    # nothing else in this pipeline needs the network. See completeness.py.
+    busco: str | None = None
+    busco_download_path: str | None = None
 
 
 @dataclass
@@ -428,7 +435,10 @@ def run(
                         f"{result.stats.total_bp:,} bp, N50 {result.stats.n50:,} bp"
                     )
 
-    # --- step 6: write everything out ------------------------------------
+    # --- step 6: optional completeness check -----------------------------
+    _score_completeness(settings, outdir, outputs, payload, log)
+
+    # --- step 7: write everything out ------------------------------------
     outputs["summary"] = report.write_summary(payload, outdir / "summary.json")
     outputs["report"] = report.write_report(payload, outdir / "report.md")
     log(f"Report written to {outputs['report']}.")
@@ -438,6 +448,50 @@ def run(
         outputs["plots"] = drawn
 
     return RunResult(settings=settings, payload=payload, outputs=outputs)
+
+
+def _score_completeness(settings, outdir: Path, outputs: dict, payload: dict, log) -> None:
+    """Run BUSCO on the nuclear contigs, when a lineage was asked for.
+
+    Off unless `--busco <lineage>` is given. Like the figures, it never fails the
+    run: a missing BUSCO, a lineage that will not download, or a crash inside it
+    all end as a note in the report. Losing a finished assembly to an optional
+    quality check would be absurd.
+
+    It scores `nuclear.fasta` and nothing else, on purpose. Pointing BUSCO at the
+    high copy elements as well would report duplicated markers that are not
+    duplications, they are two kinds of DNA in one file. completeness.py explains
+    this at more length.
+    """
+    if not settings.busco:
+        return
+
+    nuclear = outputs.get("nuclear")
+    if not nuclear or not Path(nuclear).exists():
+        log("  no nuclear contigs to score, so BUSCO was skipped")
+        payload["completeness"] = {"error": "there were no nuclear contigs to score"}
+        return
+
+    from . import completeness as completeness_mod
+
+    log(f"Scoring the nuclear contigs against {settings.busco}. BUSCO takes a while.")
+    try:
+        result = completeness_mod.run_busco(
+            Path(nuclear),
+            outdir / "completeness",
+            lineage=settings.busco,
+            threads=settings.threads,
+            download_path=settings.busco_download_path,
+        )
+    except Exception as exc:
+        log(f"  the completeness check did not finish: {exc}")
+        payload["completeness"] = {"error": str(exc), "lineage": settings.busco}
+        return
+
+    payload["completeness"] = result.as_dict()
+    outputs["completeness"] = Path(result.outdir)
+    for line in result.summary_lines():
+        log(f"  {line}")
 
 
 def _draw_plots(settings, outdir: Path, outputs: dict, payload: dict, reads, log) -> list[Path]:
