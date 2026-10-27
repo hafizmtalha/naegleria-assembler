@@ -60,6 +60,62 @@ instruments. They are set to pass everything we have confirmed and reject
 everything we have disproved, and an element that fails is reported with the
 reason rather than dropped, because a tool that silently deletes findings is
 worse than one that hands you a doubtful one with the numbers attached.
+
+## Where this comes from, and what is actually ours
+
+The signal is not ours and it is not new. That a read failing to align along
+its whole length is evidence against the boundary it stops at is the basis of a
+whole family of assembly checkers. CRAQ is named Clipping Reveals Assembly
+Quality and finds structural errors from exactly this. metaMIC counts a read as
+clipped once it has twenty unaligned bases and uses the rate of those to place
+breakpoints. anvi'o flags positions where too many reads end early. GAEP,
+Inspector and LRMD all do their own version.
+
+Doubling the target is not ours either. Mapping reads to a duplicated copy so
+that reads crossing the circular join have somewhere to land is the ordinary
+way to do this, and the tiling detour in the history was us reinventing a
+worse version of a solved problem.
+
+The failure this module catches is also well known. Repeats are the leading
+cause of circles that are not there, with ribosomal RNA operons at five to
+seven kilobases in one to fifteen near identical copies, and insertion
+sequences at under three kilobases in up to hundreds of copies. Klebsiella bit
+us with the first of those. We should have expected it.
+
+Three things here are genuinely different, and they are narrower than they
+first look:
+
+1. **It measures the read, not the element.** The circular DNA field normally
+   measures the other side of the alignment. Circle-Map reports what share of
+   the circle's bases the reads cover, and the 2018 human eccDNA atlas grades a
+   call by requiring 95 percent of the region covered. Those numbers ask how
+   much of the circle the reads reach. Ours asks how much of each read the
+   circle holds. On our Klebsiella chimera the target side number would have
+   seen nothing wrong, because every base of that 6.5 kb was covered. The reads
+   covering it simply belonged elsewhere.
+
+2. **It is one number for the whole element, used to decide whether the element
+   exists.** The clipping tools ask where inside a contig a misassembly sits,
+   so they work position by position, in windows, counting discrete clipping
+   events. This collapses every read into a single mean and uses it as a yes or
+   no on the element itself. That is a different question from the one those
+   tools answer, and we did not find it posed this way anywhere.
+
+3. **It runs on the reads of the whole library, not the compartment.** This
+   matters more than it sounds. Measuring an element against the compartment it
+   came from is a rigged jury, because that compartment was selected for depth,
+   which means selected for reads that are mostly element sequence. The reads
+   that give a chromosomal repeat away are the ones straddling its edges, and
+   those sit at ordinary depth and were never in the compartment. On real
+   E. coli data this was the difference between a repeat scoring 0.23 and
+   scoring 0.10, which is the difference between accepting it and rejecting it.
+
+So: a known signal, aggregated differently, pointed at a question the tools it
+comes from do not ask. Worth stating plainly, because the search behind this
+note was four rounds of literature search rather than a systematic review, and
+not finding something published is weak evidence that it is not. CReSIL and
+ECCFP are the two places it would most likely already exist, and we read
+summaries of both rather than their full methods.
 """
 
 from __future__ import annotations

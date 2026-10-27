@@ -305,6 +305,52 @@ A failed element is reported with the reason written out, not deleted. A tool
 that silently drops findings is worse than one that hands you a doubtful result
 with the numbers attached.
 
+**How this relates to work that already exists.** The signal is not new and we
+want to be straight about that. A read that fails to align along its whole
+length is evidence against the boundary it stops at, and that is the basis of a
+family of assembly checkers.
+[CRAQ](https://www.nature.com/articles/s41467-023-42336-w) is named Clipping
+Reveals Assembly Quality and works from exactly this.
+[metaMIC](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-022-02810-y)
+calls a read clipped once it has twenty unaligned bases and uses the rate of
+those to place breakpoints. anvi'o flags positions where too many reads end
+early. Doubling the target so junction reads have somewhere to land is also
+ordinary practice, not a trick of ours. And the failure being caught is the
+textbook one, since repeats are the known leading cause of circles that are not
+there, with rRNA operons at five to seven kilobases in up to fifteen near
+identical copies.
+
+Three things here are different, and they are narrower than they look:
+
+* **It measures the read, not the element.** The circular DNA field usually
+  measures the other side of the alignment.
+  [Circle-Map](https://link.springer.com/article/10.1186/s12859-019-3160-3)
+  reports what share of the circle's bases the reads cover, and the
+  [2018 human eccDNA atlas](https://www.nature.com/articles/s41467-018-03369-8)
+  grades a call by requiring 95 percent of the region covered. Those ask how
+  much of the circle the reads reach. We ask how much of each read the circle
+  holds. On our Klebsiella chimera the target side number would have seen
+  nothing wrong, because every base of it was covered. The reads just belonged
+  elsewhere.
+* **It is one number per element, used to decide whether the element exists.**
+  The clipping tools ask where inside a contig an error sits, so they work
+  position by position in windows. This collapses every read into a single mean
+  and uses it as a yes or no on the element itself.
+* **It runs against the whole library, not the compartment.** Judging an
+  element by the compartment it came from is a rigged jury, because that
+  compartment was selected for depth, meaning selected for reads that are
+  mostly element sequence. The reads that give a repeat away straddle its
+  edges, sit at ordinary depth, and were never in the compartment. On real
+  E. coli data this was the difference between a repeat scoring 0.23 and
+  scoring 0.10, which is the difference between keeping it and rejecting it.
+
+So it is a known signal, aggregated differently, aimed at a question the tools
+it comes from do not ask. That is the honest size of the claim. The check
+behind it was four rounds of literature search rather than a systematic review,
+and not finding something published is weak evidence that it is not published.
+[CReSIL](https://academic.oup.com/bib/article/23/6/bbac422/6747811) and ECCFP
+are where it would most likely already exist.
+
 **What this says about other species.** It should work on anything where the
 compartments you want differ in copy number from the bulk genome, which covers
 mitochondria, chloroplasts, rDNA circles, plasmids and extrachromosomal elements
@@ -506,6 +552,24 @@ Read the contig numbers next to the compartment table, not instead of it.
   reads. *Genome Research* 27, 737 to 746 (2017).
 * Li H. Minimap2: pairwise alignment for nucleotide sequences. *Bioinformatics*
   34, 3094 to 3100 (2018).
+
+On the read support check, and the clipped alignment signal it is built from:
+
+* Li K et al. Identification of errors in draft genome assemblies at single
+  nucleotide resolution for quality assessment and improvement. *Nature
+  Communications* 14, 6556 (2023). The CRAQ paper.
+* Lai S et al. metaMIC: reference free misassembly identification and
+  correction of de novo metagenomic assemblies. *Genome Biology* 23, 242 (2022).
+* Prada-Luengo I et al. Sensitive detection of circular DNAs at single
+  nucleotide resolution using guided realignment of partially aligned reads.
+  *BMC Bioinformatics* 20, 663 (2019). The Circle-Map paper, and an example of
+  measuring the element rather than the read.
+* Møller HD et al. Circular DNA elements of chromosomal origin are common in
+  healthy human somatic tissue. *Nature Communications* 9, 1069 (2018).
+* Wanchai V et al. CReSIL: accurate identification of extrachromosomal circular
+  DNA from long read sequences. *Briefings in Bioinformatics* 23, bbac422 (2022).
+* Hunt M et al. Circlator: automated circularization of genome assemblies using
+  long sequencing reads. *Genome Biology* 16, 294 (2015).
 
 ## License
 
