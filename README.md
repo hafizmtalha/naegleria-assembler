@@ -8,6 +8,10 @@ struggle. This one sorts reads into compartments by depth before it assembles
 anything, so the small circles that Naegleria carries in thousands of copies stop
 getting in the way of the chromosomes.
 
+Nothing in the method is specific to Naegleria, and it has been run on bacteria
+too. See [on bacteria, which is where it broke](#on-bacteria-which-is-where-it-broke)
+for what came out and the three bugs it exposed.
+
 Everything here runs on public data and you can reproduce the results below with
 two commands.
 
@@ -170,11 +174,19 @@ next to it.
 **Three smaller circles also came out, and we do not know what they are.**
 
 They are about 3.3 kb each, they close cleanly, they are covered deeply, and
-they share no sequence at all with either of the two circles above or with the
-published mitochondrial genome. They may be real. They may be the walk closing a
-loop that is not there. The pipeline reports them with their repeat share next to
-them and does not claim they are anything. Saying so is better than quietly
-dropping them or quietly promoting them.
+they share no sequence at all with each other, with either of the two circles
+above, or with the published mitochondrial genome.
+
+What we can say is that they are not chromosomal repeats. The read support check
+described in the bacterial section below scores them at 0.41, 0.46 and 0.66
+contained, meaning most of each supporting read lies inside the circle. Every
+chromosomal repeat we have confirmed, in two different bacteria, scores between
+0.00 and 0.14. So whatever these are, the reads behind them are not reads that
+belong somewhere else.
+
+That still does not say what they are. The pipeline reports them with their
+numbers next to them and does not claim they are anything. Saying so is better
+than quietly dropping them or quietly promoting them.
 
 **The nuclear assembly stands up next to the published one.**
 
@@ -201,6 +213,106 @@ heading for the nuclear set is checked against it directly, and the ones that
 match are dropped. That removed 1,980 reads. In the run above there is no longer
 any contig matching the published mitochondrial genome, and the earlier output is
 kept in the git history so the difference can be seen.
+
+### On bacteria, which is where it broke
+
+Nothing in the method is about Naegleria. The depth sorting does not know what
+organism it is looking at. So we pointed it at two bacterial read sets that each
+have a finished assembly of the same sample to check against, and it found three
+bugs that Naegleria data had hidden completely.
+
+The read sets are Klebsiella pneumoniae and Escherichia coli OXEC-73, both
+nanopore, both with every replicon closed in the reference.
+
+**The main assembly was fine from the start.**
+
+| | Klebsiella | E. coli |
+|---|---|---|
+| Replicons in the reference | 4 | 7 |
+| Replicons recovered | 4 of 4 | 7 of 7 |
+| Contigs | 5 | 5 |
+| N50 | 5,303,354 bp | 5,046,292 bp |
+| Chromosome covered | 100% | 100% |
+
+For E. coli the chromosome came back as one contig at 99.8 percent identity, the
+131 kb and 87 kb plasmids as one contig each, and the two smallest plasmids as
+tandem copies of themselves, which is a known habit of Flye on small circles
+rather than anything we did. Two further plasmids came out of the element path,
+matching the reference at 98 and 99 percent.
+
+Use `--mode long_then_polish` for bacteria. Plain `long` mode skips polishing and
+leaves the raw nanopore error rate in place, which looks like a bad assembly when
+it is really an unpolished one. Also drop `--scale` to about 20, because a 5 Mb
+genome contributes far fewer k-mers than a 30 Mb one.
+
+**The elements were not fine, and the reason is interesting.**
+
+In Naegleria, sequence that is much deeper than the rest of the genome really is
+a separate molecule. That is the biology. The pipeline was built around it, and
+somewhere along the way the inference stopped being an observation and became an
+assumption baked into the code.
+
+In a bacterium the same depth means something else entirely. Klebsiella carries
+eight copies of its ribosomal RNA operon inside the chromosome, plus a scatter of
+insertion sequences. That sequence is genuinely several times deeper than the
+rest of the genome, so the depth sorting puts it in a high copy compartment and is
+right to. It is simply not a separate molecule. Handed those reads, the circular
+assembler closed four loops that do not exist, one of them a 6.5 kb sequence
+stitched together from reads belonging to dozens of unrelated places in the
+chromosome.
+
+Nothing caught it, because nothing asked the obvious question afterwards: do the
+reads actually support this?
+
+**So now it asks.** `src/nagasm/support.py` maps the reads back to each assembled
+element and measures two things, with no reference involved.
+
+* **Depth.** How deeply the element is covered by the reads it came from. An
+  element pulled out of a compartment sitting at hundreds of times the main
+  genome cannot honestly come back covered twice. Three of the four Klebsiella
+  circles were supported at under 3x and are caught here.
+* **Containment.** For each read, what share of it lies inside the element. A
+  read off a free circle matches along its whole length, because there is nothing
+  else on that molecule to match. A read crossing the edge of a chromosomal
+  repeat matches only in the middle, with unique chromosome either side that has
+  nowhere to go.
+
+Containment is the one that does the work. Depth alone would have failed on
+E. coli, where every element came back between 415x and 5,420x, the real
+plasmids and the artefacts alike.
+
+| Organism | Elements | Verdict |
+|---|---|---|
+| Naegleria | 5 confirmed real | all kept, contained 0.41 to 0.93 |
+| Klebsiella | 4 artefacts | all rejected, contained 0.00 to 0.03 |
+| E. coli | 2 real, 4 artefacts | all 6 called correctly |
+
+Fifteen of fifteen, across three organisms. The threshold sits at 0.20, with real
+elements starting at 0.41 and artefacts topping out at 0.14, so nothing sits near
+the line.
+
+**The third bug was the expensive one.** An unsupported element was still having
+its reads pulled out of the nuclear set, on the grounds that they were already
+accounted for. On E. coli that removed about 48,000 reads, including every read
+belonging to a real 5,167 bp plasmid, which was then represented only by a
+chimera matching it at under half identity. A genuine replicon was destroyed while
+the output still looked complete. Now only elements the reads support are allowed
+to take reads away. The same run removes 1,003 reads instead of 48,000, the
+plasmid comes back at 99.3 percent identity, and the assembly goes from 11
+contigs to 5.
+
+A failed element is reported with the reason written out, not deleted. A tool
+that silently drops findings is worse than one that hands you a doubtful result
+with the numbers attached.
+
+**What this says about other species.** It should work on anything where the
+compartments you want differ in copy number from the bulk genome, which covers
+mitochondria, chloroplasts, rDNA circles, plasmids and extrachromosomal elements
+generally. The method never translates DNA, so there is no genetic code or codon
+table to adjust for a new organism. What does change is how much of the deep
+sequence is a separate molecule and how much is repeat living inside a
+chromosome, and that is the question the support check now answers out loud
+instead of assuming.
 
 ### On data where we know the answer
 
@@ -326,6 +438,11 @@ Said plainly, because a tool that hides this is worse than useless.
 * **Short reads cannot do this on their own.** They can find the compartments,
   but they cannot get across the repeats inside the circles, so the circles will
   come out broken.
+* **A high copy compartment is not always a separate molecule.** In a bacterium
+  it is usually a repeat living inside the chromosome. The support check catches
+  those and says why, but the circular assembler still builds them first, so you
+  will see rejected elements in the output of a bacterial run. That is the tool
+  working, not failing.
 
 ## How it is built
 
@@ -340,6 +457,7 @@ src/nagasm/
 ├── olc.py         our own assembler for chromosomes, for reading
 ├── nuclear.py     handing the nuclear reads to Flye or SPAdes
 ├── polish.py      minimap2 and racon, including the trick for circles
+├── support.py     asking whether an element is really a separate molecule
 ├── stats.py       N50 and friends
 ├── report.py      figures and the written report
 └── pipeline.py    the order the steps happen in
@@ -350,7 +468,7 @@ rust/src/
 └── sketch.rs      anchors, and where two reads line up
 ```
 
-There are 79 Python tests and 18 Rust tests.
+There are 88 Python tests and 18 Rust tests.
 
 ```bash
 pytest

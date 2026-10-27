@@ -20,7 +20,15 @@ import datetime as _dt
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import circular, nuclear as nuclear_mod, polish as polish_mod, report, stats, triage
+from . import (
+    circular,
+    nuclear as nuclear_mod,
+    polish as polish_mod,
+    report,
+    stats,
+    support,
+    triage,
+)
 from .seqio import Record, read_sequences, write_fasta
 
 
@@ -182,6 +190,32 @@ def run(
 
             suffix = "circular" if asm.is_circular else "linear"
             name = f"{comp.label}_{part}_{suffix}"
+
+            # Ask whether the reads actually back this up before calling it an
+            # element. A deep compartment in a bacterium is usually a repeat
+            # inside the chromosome rather than a molecule of its own, and the
+            # assembler will happily close a circle out of it.
+            # Measured against every read, not just the reads in this
+            # compartment. The compartment was chosen for being deep, which
+            # means chosen for reads that are mostly element sequence, so
+            # asking it to judge its own element is a rigged jury. The reads
+            # that give a chromosomal repeat away are exactly the ones that
+            # straddle its edges, and those sit at ordinary depth and were
+            # left out of the compartment. On real E. coli data this was the
+            # difference between a repeat scoring 0.23 and scoring 0.10.
+            element_support = support.measure(
+                sequence,
+                triage_reads,
+                is_circular=asm.is_circular,
+                read_type=settings.read_type,
+                threads=settings.threads,
+                workdir=outdir / "work" / f"support_{comp.label}_{part}",
+            )
+            supported, why = support.verdict(element_support)
+            asm.notes.append(why)
+            if not supported:
+                log(f"  {name}: not supported by the reads, {why}")
+
             element_records.append(Record(name, sequence))
             elements.append(
                 {
@@ -192,6 +226,8 @@ def run(
                     "mean_coverage": round(asm.mean_coverage, 1),
                     "reads_used": asm.n_reads_used,
                     "notes": asm.notes,
+                    "supported": supported,
+                    "support": element_support.as_dict(),
                     "repeat_content": round(circular.repeat_content(sequence, 50), 3),
                     "resolvability": circular.resolvability_note(sequence, comp_reads),
                 }
@@ -251,6 +287,23 @@ def run(
                 continue
 
             name = f"deep_element_{n}_circular"
+
+            # These reads were collected because they are deep, not because
+            # they form a hump of their own, so this path is the one most
+            # likely to hand back a repeat dressed up as a circle.
+            element_support = support.measure(
+                sequence,
+                triage_reads,
+                is_circular=True,
+                read_type=settings.read_type,
+                threads=settings.threads,
+                workdir=outdir / "work" / f"support_deep_{n}",
+            )
+            supported, why = support.verdict(element_support)
+            asm.notes.append(why)
+            if not supported:
+                log(f"  {name}: not supported by the reads, {why}")
+
             element_records.append(Record(name, sequence))
             elements.append(
                 {
@@ -261,6 +314,8 @@ def run(
                     "mean_coverage": round(asm.mean_coverage, 1),
                     "reads_used": asm.n_reads_used,
                     "notes": asm.notes,
+                    "supported": supported,
+                    "support": element_support.as_dict(),
                     "repeat_content": round(circular.repeat_content(sequence, 50), 3),
                     "resolvability": circular.resolvability_note(sequence, outlier_reads),
                 }
@@ -295,9 +350,17 @@ def run(
             #
             # Now that the elements are assembled, we can do better than a depth
             # cutoff and ask directly whether a read looks like one of them.
-            if element_records and nuclear_long:
+            # Only elements the reads actually support are taken out. An
+            # element that failed that check is most likely a repeat living
+            # inside the chromosome, and pulling its reads out would strip
+            # real sequence from the assembly it belongs to.
+            supported_names = {
+                e["name"] for e in elements if e.get("supported", True)
+            }
+            keep_out = [r for r in element_records if r.name in supported_names]
+            if keep_out and nuclear_long:
                 before = len(nuclear_long)
-                for record in element_records:
+                for record in keep_out:
                     if not nuclear_long:
                         break
                     belongs = circular.reads_from_element(
