@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="LINEAGE",
         default=None,
         help="score the nuclear contigs against a BUSCO lineage, for example "
-        "eukaryota_odb10 for Naegleria or bacteria_odb10 for the bacterial test "
+        "eukaryota_odb12 for Naegleria or bacteria_odb12 for the bacterial test "
         "case. Off unless you ask, because BUSCO is not in environment.yml and "
         "downloads its lineage the first time. nagasm completeness --lineages "
         "lists the ones worth trying",
@@ -307,8 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
     comp.add_argument(
         "-l",
         "--lineage",
-        default="eukaryota_odb10",
-        help="the BUSCO lineage (default: eukaryota_odb10)",
+        default="eukaryota_odb12",
+        help="the BUSCO lineage (default: eukaryota_odb12). BUSCO 6 dropped the "
+        "odb10 sets for everything but viruses, and a name copied out of "
+        "--list-datasets may carry a release suffix like _odb12.2 that BUSCO "
+        "will not accept. The trailing number is stripped for you",
     )
     comp.add_argument(
         "-o", "--outdir", default="completeness", help="where to put the results"

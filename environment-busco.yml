@@ -4,10 +4,11 @@
 # ask for it with --busco. It lives here rather than in environment.yml for two
 # reasons.
 #
-# First, it is heavy. It pulls in metaeuk, hmmer, sepp, bbmap and a stack of
-# their dependencies, and those have pinned requirements that argue with the ones
-# the assembler needs. Putting them in one environment means the solver either
-# takes a long time or quietly downgrades something the pipeline depends on.
+# First, it is heavy. It pulls in metaeuk, miniprot, augustus, blast, hmmer, sepp
+# and a stack of their dependencies, and those have pinned requirements that
+# argue with the ones the assembler needs. Putting them in one environment means
+# the solver either takes a long time or quietly downgrades something the
+# pipeline depends on.
 #
 # Second, it reaches out to the network. BUSCO downloads its lineage the first
 # time it runs. Everything else in this pipeline works offline, and that is worth
@@ -16,23 +17,35 @@
 # Install:
 #     mamba env create -f environment-busco.yml
 #
-# Then either put it on PATH when you want the check:
-#     conda activate nagasm-busco && busco --version
-#     conda activate nagasm
-#     PATH="$CONDA_PREFIX/../nagasm-busco/bin:$PATH" nagasm assemble ... --busco eukaryota_odb10
+# Then run the check with this environment active. Activating it matters, see the
+# note on java below:
+#     mamba activate nagasm-busco
+#     nagasm completeness results/assembly/nuclear.fasta -l bacteria_odb12 -t 8
 #
-# or run the standalone step from the busco environment against an assembly that
-# already exists, which is simpler:
-#     conda activate nagasm-busco
-#     busco -i results/assembly/nuclear.fasta -o nuclear -m genome -l eukaryota_odb10 -c 8
+# The nagasm command keeps working with this environment active because its
+# launcher carries an absolute interpreter path. BUSCO's launcher does not: it
+# starts with #!/usr/bin/env python3, so if you put another environment's bin
+# ahead of this one on PATH, BUSCO runs under the wrong python and dies with
+# "No module named 'busco'".
 #
 # To download a lineage once and then work offline:
-#     busco --download eukaryota_odb10
-#     nagasm assemble ... --busco eukaryota_odb10 --busco-download-path busco_downloads
+#     busco --download bacteria_odb12
+#     nagasm assemble ... --busco bacteria_odb12 --busco-download-path busco_downloads
 #
-# The sepp pin is not fussiness. BUSCO's own guide warns that sepp 4.5.6 is
-# incompatible with its automatic lineage files and silently picks the wrong
-# lineage, which is the worst kind of bug: it finishes, and the number is wrong.
+# --- Two pins and two extras that are all here for a reason ------------------
+#
+# sepp: BUSCO's own guide warns that 4.5.6 is incompatible with its automatic
+# lineage files and silently picks the wrong lineage. That is the worst kind of
+# bug, because it finishes and the number is wrong.
+#
+# bbmap and openjdk: BUSCO shells out to BBMap's stats.sh for the assembly
+# statistics it prints, and BBMap is Java. Neither comes in automatically on
+# every platform. Without them BUSCO fails late with
+# "Command '['stats.sh', '--version']' returned non-zero exit status 1", which
+# says nothing about Java at all. Some conda openjdk builds put the java binary
+# in lib/jvm/bin rather than bin, and the environment's activation script is what
+# puts it on PATH, which is why you want to activate rather than only prepend the
+# bin folder.
 name: nagasm-busco
 channels:
   - conda-forge
@@ -41,3 +54,5 @@ dependencies:
   - python=3.12
   - busco=6.0.0
   - sepp=4.5.5
+  - bbmap
+  - openjdk

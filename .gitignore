@@ -13,3 +13,7 @@ data/
 results/
 logs/
 .snakemake/
+
+# BUSCO downloads its lineages into here when no --busco-download-path is given
+busco_downloads/
+completeness/

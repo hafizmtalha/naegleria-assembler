@@ -51,24 +51,72 @@ from pathlib import Path
 # BUSCO has hundreds, and `busco --list-datasets` is the only authority on what
 # your install can actually fetch.
 #
-# A word on the suffix. The odb10 sets are the ones most papers quote. BUSCO 6
-# ships newer odb12 sets built from OrthoDB v12, which cover more of the tree and
-# give noticeably different scores on the same assembly. Neither is wrong, but
-# they are not comparable, so whichever you pick, say which one in the methods.
-# The names below are written with odb10 because that is what the numbers in this
-# repo were produced with.
+# The suffix is not cosmetic, and it cost an hour. Two traps sit here, both found
+# by installing BUSCO 6.0.0 and watching it fail.
+#
+# First, BUSCO 6 dropped every odb10 set for cellular life and ships only odb12.
+# Only the viral sets kept the odb10 name. So `eukaryota_odb10`, which is what
+# most papers quote and what this module first defaulted to, is not a name BUSCO
+# 6 will accept.
+#
+# Second, and worse, `busco --list-datasets` prints names ending `_odb12.2`, but
+# those are the OrthoDB release label rather than the dataset name. Ask for
+# `bacteria_odb12.2` and BUSCO builds the download URL for `bacteria_odb12`,
+# fetches the right 58 MB file, then checks it against the md5 on the
+# `bacteria_odb12.2` row of its own manifest, which is a different hash. It fails
+# with "md5 hash is incorrect" and deletes the file, which reads like a corrupt
+# download and is not one. The name to pass is `bacteria_odb12`, with no `.2`.
+# See _normalise_lineage below, which strips it for you.
+#
+# The marker counts are the ones BUSCO itself reports, not estimates. On BUSCO 5
+# you want the odb10 spellings and different counts: eukaryota_odb10 held 255
+# markers where eukaryota_odb12 holds 125. The two generations score the same
+# assembly differently, so whichever you use, say which one in the methods.
+DEFAULT_LINEAGE = "eukaryota_odb12"
+
 SUGGESTED_LINEAGES = {
-    "eukaryota_odb10": "all eukaryotes, about 255 markers. The honest choice for "
-    "Naegleria, and a coarse one",
-    "bacteria_odb10": "all bacteria, about 124 markers. The right set for the "
-    "bacterial test case",
-    "protists_odb10": "protists. Closer to Naegleria than eukaryota, though still "
-    "a long way off",
-    "fungi_odb10": "fungi, about 758 markers. Here only because it is a common "
-    "point of comparison, not because it suits this organism",
-    "metazoa_odb10": "animals, about 954 markers. Wrong for Naegleria, and a "
-    "useful illustration of what a badly matched lineage scores",
+    "eukaryota_odb12": "all eukaryotes, 125 markers. The honest choice for "
+    "Naegleria, and a very coarse one. BUSCO 5 called this eukaryota_odb10 and "
+    "had 255 markers in it",
+    "bacteria_odb12": "all bacteria, 116 markers. The right set for the "
+    "bacterial test case, and a close match to the organism",
+    "archaea_odb12": "all archaea, 195 markers",
+    "euglenozoa_odb12": "Euglenozoa, 2,579 markers. The other main branch of "
+    "Discoba, so it is Naegleria's nearest relative in the list and still far "
+    "too specific to use on it. Here to be explicit that nothing closer exists",
+    "metazoa_odb12": "animals, 932 markers. Wrong for Naegleria, and a useful "
+    "illustration of what a badly matched lineage scores",
+    "fungi_odb12": "fungi, 1,019 markers. A common point of comparison, not a "
+    "fit for this organism",
 }
+
+# The OrthoDB release label that `busco --list-datasets` prints but BUSCO will
+# not accept as a dataset name. See the note above.
+_RELEASE_LABEL = re.compile(r"^(?P<name>.+_odb\d+)\.\d+$")
+
+
+def _normalise_lineage(lineage: str) -> tuple[str, str | None]:
+    """Turn a name copied out of `--list-datasets` into one BUSCO will accept.
+
+    Returns the name to use and, when something was changed, a note explaining
+    what. Copying `bacteria_odb12.2` straight out of the dataset listing is the
+    obvious thing to do and it fails in a way that looks like a corrupt download,
+    so this fixes it quietly and says so rather than letting the run die twenty
+    seconds and 58 MB later.
+
+    A path is left alone, since an explicit directory is not a dataset name.
+    """
+    if "/" in lineage or Path(lineage).exists():
+        return lineage, None
+    found = _RELEASE_LABEL.match(lineage)
+    if not found:
+        return lineage, None
+    name = found.group("name")
+    return name, (
+        f"asked for {lineage}, using {name}. The trailing number is the OrthoDB "
+        "release that busco --list-datasets prints, not part of the dataset name, "
+        "and passing it makes BUSCO fail its own md5 check"
+    )
 
 ONE_LINE = re.compile(
     r"C:\s*([\d.]+)%\s*\[\s*S:\s*([\d.]+)%\s*,\s*D:\s*([\d.]+)%\s*\]\s*,\s*"
@@ -282,6 +330,63 @@ def find_summary(outdir: Path) -> Path | None:
     return None
 
 
+def diagnose_failure(log_text: str) -> str | None:
+    """Turn a BUSCO failure log into the thing you actually need to change.
+
+    Every entry here is a failure that happened while this module was being
+    written, and each one has a log message that points somewhere unhelpful. The
+    md5 one is the worst: it reads like a corrupt download, deletes the file, and
+    is really a wrong name. Handing someone BUSCO's own last twenty lines and
+    letting them work that out again is not good enough.
+    """
+    if not log_text:
+        return None
+
+    if "md5 hash is incorrect" in log_text:
+        return (
+            "BUSCO downloaded the lineage and then failed its own md5 check. This "
+            "almost always means the lineage name carried an OrthoDB release "
+            "suffix, like bacteria_odb12.2 instead of bacteria_odb12. BUSCO builds "
+            "the URL from the name without the suffix but checks the hash listed "
+            "against the name with it, so the file is fine and the comparison is "
+            "not. Drop the trailing number"
+        )
+
+    if "Unable to locate a Java Runtime" in log_text or "java: command not found" in log_text:
+        return (
+            "BUSCO needs BBMap for its assembly statistics, and BBMap is Java. "
+            "There is no Java on PATH. Install openjdk into the BUSCO "
+            "environment, and note that some conda builds put java in "
+            "lib/jvm/bin rather than bin, so activate the environment properly "
+            "rather than only prepending its bin folder"
+        )
+
+    if "No module named 'busco'" in log_text:
+        return (
+            "BUSCO's launcher starts with #!/usr/bin/env python3, so it runs "
+            "whichever python3 is first on PATH. Another environment is ahead of "
+            "it and does not have BUSCO installed. Put the BUSCO environment's "
+            "bin first. The nagasm command has an absolute interpreter path, so "
+            "it keeps working either way"
+        )
+
+    if "unable to download or update all necessary files" in log_text.lower():
+        return (
+            "BUSCO could not fetch the lineage. If the machine is offline, "
+            "download it once elsewhere and point --busco-download-path at the "
+            "folder holding it"
+        )
+
+    if "not a valid option for" in log_text or "Unknown dataset" in log_text:
+        return (
+            "BUSCO does not recognise that lineage. Run busco --list-datasets to "
+            "see what your version offers, and remember that BUSCO 6 dropped the "
+            "odb10 sets for everything except viruses"
+        )
+
+    return None
+
+
 def interpret(result: Completeness, scored_nuclear_only: bool = True) -> list[str]:
     """Plain sentences about what the score does and does not show.
 
@@ -368,7 +473,7 @@ def interpret(result: Completeness, scored_nuclear_only: bool = True) -> list[st
 def run_busco(
     fasta: Path | str,
     outdir: Path | str,
-    lineage: str = "eukaryota_odb10",
+    lineage: str = DEFAULT_LINEAGE,
     threads: int = 4,
     mode: str = "genome",
     download_path: Path | str | None = None,
@@ -400,6 +505,9 @@ def run_busco(
             "guide warns that 4.5.6 picks the wrong lineage without saying so"
         )
 
+    lineage, renamed = _normalise_lineage(str(lineage))
+    extra_notes = [renamed] if renamed else []
+
     outdir.mkdir(parents=True, exist_ok=True)
     cmd = [
         "busco",
@@ -428,10 +536,12 @@ def run_busco(
 
     summary = find_summary(outdir / name) or find_summary(outdir)
     if proc.returncode != 0 and summary is None:
-        tail = ""
-        if log_path.exists():
-            tail = log_path.read_text(errors="replace")[-2000:]
-        raise RuntimeError(f"busco failed, its log ends:\n{tail}")
+        log_text = log_path.read_text(errors="replace") if log_path.exists() else ""
+        hint = diagnose_failure(log_text)
+        message = f"busco failed, its log ends:\n{log_text[-2000:]}"
+        if hint:
+            message = f"busco failed: {hint}\n\nIts log ends:\n{log_text[-2000:]}"
+        raise RuntimeError(message)
     if summary is None:
         raise RuntimeError(
             f"busco finished but wrote no short summary under {outdir}. Its log is "
@@ -445,5 +555,7 @@ def run_busco(
         outdir=str(outdir / name),
         **{k: v for k, v in numbers.items() if k in Completeness.__dataclass_fields__},
     )
-    result.notes = interpret(result, scored_nuclear_only=fasta.name == "nuclear.fasta")
+    result.notes = extra_notes + interpret(
+        result, scored_nuclear_only=fasta.name == "nuclear.fasta"
+    )
     return result

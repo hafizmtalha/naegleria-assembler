@@ -739,20 +739,30 @@ BUSCO already does that job well, so we hand it over rather than reinvent it.
 
 ```bash
 # during a run
-nagasm assemble -l reads.fastq.gz -o results -t 8 --busco eukaryota_odb10
+nagasm assemble -l reads.fastq.gz -o results -t 8 --busco eukaryota_odb12
 
 # or on an assembly you already have
-nagasm completeness results/assembly/nuclear.fasta -l eukaryota_odb10 -t 8
+nagasm completeness results/assembly/nuclear.fasta -l eukaryota_odb12 -t 8
 
 # which lineages are worth trying
 nagasm completeness --lineages
 ```
 
-Install it separately, because it is not in `environment.yml`:
+Install it separately, because it is not in `environment.yml`, and **activate
+that environment** rather than only putting its `bin` on `PATH`:
 
 ```bash
 mamba env create -f environment-busco.yml
+mamba activate nagasm-busco
 ```
+
+Activating matters for two reasons found the hard way. BUSCO's launcher starts
+with `#!/usr/bin/env python3`, so if another environment sits ahead of it on
+`PATH` then BUSCO runs under the wrong interpreter and dies with
+`No module named 'busco'`. And BUSCO shells out to BBMap, which is Java, and some
+conda openjdk builds put `java` in `lib/jvm/bin` rather than `bin`, so only the
+activation script puts it where BBMap can find it. The `nagasm` command itself is
+unaffected either way, because its launcher carries an absolute interpreter path.
 
 #### Three things that decide whether the number means anything
 
@@ -766,25 +776,56 @@ hand it something else.
 
 **The lineage is a compromise on this organism.** Naegleria sits in
 Heterolobosea, inside Discoba, and BUSCO has no set anywhere near that close.
-`eukaryota_odb10` is the honest choice at about 255 markers shared across all
-eukaryotes, and it is coarse. A good score on 255 broad markers is weak evidence
-that a 30 Mb genome is complete, and the report phrases it that way instead of
-calling the assembly finished. The bacterial test case is the opposite: 124
-bacterial markers over 5 Mb, matched closely to the organism, which carries real
-weight. The report tells these two cases apart rather than calling both coarse.
+`eukaryota_odb12` is the honest choice at 125 markers shared across all
+eukaryotes, and it is very coarse. A good score on 125 broad markers is weak
+evidence that a 30 Mb genome is complete, and the report phrases it that way
+instead of calling the assembly finished. The nearest relative BUSCO does offer is
+`euglenozoa_odb12`, the other main branch of Discoba, and at 2,579 markers it is
+far too specific to use on Naegleria. Nothing closer exists, which is worth
+stating rather than leaving someone to hunt for it.
 
-One more thing on lineages. BUSCO 6 ships newer `odb12` sets that score the same
-assembly differently from the `odb10` sets most papers quote. Neither is wrong,
-but they are not comparable, so say which you used.
+The bacterial test case is the opposite: 116 bacterial markers over 5 Mb, matched
+closely to the organism, which carries real weight. The report tells these two
+cases apart rather than calling both coarse.
+
+**Lineage names are a trap, and cost an hour.** Two things to know:
+
+* BUSCO 6 **dropped every `odb10` set for cellular life** and ships only `odb12`.
+  Only the viral sets kept the `odb10` name. So `eukaryota_odb10`, which is what
+  most papers quote, is not a name BUSCO 6 will accept.
+* `busco --list-datasets` prints names like `bacteria_odb12.2`, but the trailing
+  number is the OrthoDB release label, not part of the dataset name. Pass it and
+  BUSCO builds the download URL for `bacteria_odb12`, fetches the correct 58 MB
+  file, then checks it against the md5 on the `bacteria_odb12.2` row of its own
+  manifest, which is a different hash. It fails with `md5 hash is incorrect` and
+  deletes the file. That reads exactly like a corrupt download and is not one.
+
+We strip the trailing number for you and say so in the output, so copying a name
+straight out of the dataset listing works. The two generations also score the same
+assembly differently, so say which you used.
 
 **It needs the network the first time.** BUSCO downloads its lineage on first
 run, and it is the only step in this pipeline that reaches outside the machine.
 That is the main reason it is off by default. Download once, then work offline:
 
 ```bash
-busco --download eukaryota_odb10
-nagasm assemble ... --busco eukaryota_odb10 --busco-download-path busco_downloads
+busco --download eukaryota_odb12
+nagasm assemble ... --busco eukaryota_odb12 --busco-download-path busco_downloads
 ```
+
+Without `--busco-download-path`, BUSCO caches into `busco_downloads/` in the
+working directory. That is BUSCO's own default and we leave it alone, because
+redirecting it per run would re-download 58 MB every time. It is in
+`.gitignore`.
+
+#### When it goes wrong, it says what to change
+
+BUSCO's own error messages point somewhere unhelpful for the three failures above,
+so each one is translated. Asking for `bacteria_odb12.2` gets you the dataset you
+meant and a note; a missing Java runtime is reported as a missing Java runtime
+rather than as `stats.sh returned non-zero exit status 1`; and the wrong `python3`
+on `PATH` is named as such. An error we have not seen before is passed through
+untouched rather than given an invented explanation.
 
 #### What it adds to the report
 
@@ -792,24 +833,34 @@ A table of shares next to counts, BUSCO's own one line summary, and a few plain
 sentences about what the score shows. Shares alone invite two opposite mistakes,
 reading a high score as a finished genome and reading duplication as a fault when
 it is often the assembly telling you something true, so the notes say which case
-you are in. From a bacterial run:
+you are in.
+
+This is the real output from scoring the E. coli assembly in the worked example,
+BUSCO 6.0.0 against `bacteria_odb12`, which took 8 seconds:
 
 ```
 ## Gene content
 
-Scored with BUSCO against **bacteria_odb10**, 124 markers, on `nuclear.fasta`.
+Scored with BUSCO against **bacteria_odb12**, 116 markers, on `nuclear.fasta`.
 
 | | Share | Count |
 |---|---|---|
-| Complete | 99.2% | 123 |
-| of those, single copy | 98.4% | 122 |
-| of those, duplicated | 0.8% | 1 |
-| Fragmented | 0.0% | 0 |
-| Missing | 0.8% | 1 |
+| Complete | 96.6% | 112 |
+| of those, single copy | 96.6% | 112 |
+| of those, duplicated | 0.0% | 0 |
+| Fragmented | 2.6% | 3 |
+| Missing | 0.9% | 1 |
 ```
 
-Counts sit beside shares because 95% of 255 markers and 95% of 2,000 markers are
+Counts sit beside shares because 95% of 116 markers and 95% of 2,000 markers are
 not the same evidence.
+
+Two things worth noticing in that result. **Zero duplicated markers** is the
+check working: this assembly separated the plasmids and the chromosomal repeats
+out into the elements file, so nothing got counted twice. And BUSCO independently
+reports the assembly as 5 contigs, 5,285,195 bp, N50 5,046,292, which matches what
+`nagasm stats` says exactly, so the two tools agree on the assembly they are
+looking at.
 
 **It never fails the run.** A missing BUSCO, a lineage that will not download, a
 crash inside it: each ends as a note in the report. Losing a finished assembly to
@@ -959,7 +1010,7 @@ rust/src/
 
 ## Tests
 
-150 Python tests and 18 Rust tests. They take about twenty seconds.
+162 Python tests and 18 Rust tests. They take about twenty seconds.
 
 ```bash
 pytest
@@ -969,7 +1020,7 @@ cd rust && cargo test --no-default-features
 | File | Tests | What it covers |
 |---|---|---|
 | `test_circular.py` | 27 | closing circles, rotating to a fixed start, overlaps |
-| `test_completeness.py` | 26 | reading BUSCO's summary, and what the score means |
+| `test_completeness.py` | 38 | reading BUSCO's real output, and what the score means |
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
 | `test_triage.py` | 22 | finding compartments, and refusing to invent them |
 | `test_plots.py` | 18 | the numbers behind karyotypes, dotplots and coverage |
@@ -979,16 +1030,23 @@ cd rust && cargo test --no-default-features
 
 Tests that need minimap2 skip themselves when it is missing, rather than fail.
 
-**The BUSCO tests do not run BUSCO.** It is not installed in this environment and
-is not in `environment.yml`, so what they test is the part that can go wrong
-quietly: reading its summary. The fixtures are real BUSCO output in both shapes it
-writes, JSON and plain text, and the tests check that every number comes back. A
-parser that misses a field and returns a clean zero is worse than one that
-crashes, because 0.0% complete reads like a measurement. One test asserts that an
-unreadable summary comes back empty rather than full of zeros, and another that a
-failed check is reported as failed rather than as a score. What has **not** been
-verified end to end is BUSCO itself running inside the pipeline, since it is not
-installed here.
+**The BUSCO tests run against real BUSCO output.** `tests/data/` holds the JSON
+and plain text summaries from an actual BUSCO 6.0.0 run over the E. coli assembly
+in the worked example, and the tests check that every number comes back from both
+and that the two agree with each other. A parser that misses a field and returns
+a clean zero is worse than one that crashes, because 0.0% complete reads like a
+measurement, so one test asserts an unreadable summary comes back empty rather
+than full of zeros, one that a real zero is kept as a zero, and one that a failed
+check is reported as failed rather than as a score.
+
+The failure-explanation tests use log text from failures that actually happened
+while this was being got working: the md5 trap, the missing Java runtime and the
+wrong `python3` on `PATH`. One test asserts that an unrecognised error gets no
+invented explanation.
+
+The tests themselves do not invoke BUSCO, so they pass whether or not it is
+installed. BUSCO running inside the pipeline **has** been verified end to end,
+by hand, on the E. coli assembly.
 
 **The ones worth knowing about.** Quite a few of these exist because the code
 failed them while it was being written, and three of them guard bugs that made
