@@ -121,6 +121,10 @@ def _normalise_lineage(lineage: str) -> tuple[str, str | None]:
 ONE_LINE = re.compile(
     r"C:\s*([\d.]+)%\s*\[\s*S:\s*([\d.]+)%\s*,\s*D:\s*([\d.]+)%\s*\]\s*,\s*"
     r"F:\s*([\d.]+)%\s*,\s*M:\s*([\d.]+)%\s*,\s*n:\s*(\d+)"
+    # BUSCO 6 appends E: on eukaryote runs, the share of complete matches whose
+    # gene prediction contains an internal stop codon. Optional, because
+    # prokaryote runs and BUSCO 5 do not print it.
+    r"(?:\s*,\s*E:\s*([\d.]+)%)?"
 )
 
 
@@ -139,6 +143,11 @@ class Completeness:
 
     lineage: str
     scored: str  # which file was scored, so a score is never read as whole-assembly
+    # Which BUSCO produced this. Worth recording rather than inferring, because
+    # the dataset generations are tied to it: BUSCO 5 scored eukaryota_odb10 over
+    # 255 markers where BUSCO 6 scores eukaryota_odb12 over 125. A score with no
+    # version next to it cannot be compared with anything a year later.
+    busco_version: str = ""
     n_markers: int = 0
     complete_pct: float = 0.0
     single_pct: float = 0.0
@@ -150,6 +159,15 @@ class Completeness:
     duplicated_n: int = 0
     fragmented_n: int = 0
     missing_n: int = 0
+    # BUSCO 6 reports these on eukaryote runs and they are the most actionable
+    # numbers it produces for a long read assembly. An internal stop codon in a
+    # gene that every eukaryote carries is almost never real biology, it is a
+    # frameshift, which on nanopore data means an uncorrected indel. A high share
+    # here says the bases need more polishing even when completeness looks fine,
+    # and completeness alone would never show it.
+    internal_stop_pct: float = 0.0
+    internal_stop_n: int = 0
+    avg_identity: float = 0.0
     one_line: str = ""
     outdir: str = ""
     notes: list[str] = field(default_factory=list)
@@ -158,7 +176,9 @@ class Completeness:
         return asdict(self)
 
     def summary_lines(self) -> list[str]:
-        return [
+        tool = f"BUSCO {self.busco_version}" if self.busco_version else "BUSCO"
+        lines = [
+            f"Scored by: {tool}",
             f"Lineage: {self.lineage} ({self.n_markers:,} markers)",
             f"Scored: {self.scored}",
             f"Complete: {self.complete_pct:.1f}% ({self.complete_n:,})",
@@ -167,6 +187,14 @@ class Completeness:
             f"Fragmented: {self.fragmented_pct:.1f}% ({self.fragmented_n:,})",
             f"Missing: {self.missing_pct:.1f}% ({self.missing_n:,})",
         ]
+        if self.internal_stop_pct:
+            lines.append(
+                f"Complete matches with an internal stop codon: "
+                f"{self.internal_stop_pct:.1f}% ({self.internal_stop_n:,})"
+            )
+        if self.avg_identity:
+            lines.append(f"Mean identity to the marker profiles: {self.avg_identity:.2f}")
+        return lines
 
 
 def have_busco() -> bool:
@@ -255,6 +283,8 @@ def parse_summary(text: str) -> dict:
             n_markers=int(found.group(6)),
             one_line=found.group(0),
         )
+        if found.group(7) is not None:
+            numbers["internal_stop_pct"] = float(found.group(7))
 
     if isinstance(results, dict) and results:
         counts = {
@@ -268,6 +298,16 @@ def parse_summary(text: str) -> dict:
             value = _first(results, *keys)
             if value is not None:
                 numbers[field_name] = _as_int(value)
+        for field_name, keys in (
+            ("internal_stop_pct", ("internal_stop_codon_percent",)),
+            ("internal_stop_n", ("internal_stop_codon_count",)),
+            ("avg_identity", ("avg_identity",)),
+        ):
+            value = _first(results, *keys)
+            if value is not None:
+                numbers[field_name] = (
+                    _as_int(value) if field_name.endswith("_n") else _as_float(value)
+                )
         markers = _first(results, "n_markers", "n")
         if markers is not None and not numbers.get("n_markers"):
             numbers["n_markers"] = _as_int(markers)
@@ -297,8 +337,29 @@ def parse_summary(text: str) -> dict:
             if hit:
                 numbers.setdefault(field_name, int(hit.group(1)))
 
+    # The text summary never tabulates the internal stop codons. It only says so
+    # in a warning line, so that is where they have to come from.
+    # Two spellings, because the short summary and the run log word it
+    # differently and only one of them carries the percentage.
+    if "internal_stop_n" not in numbers:
+        hit = re.search(
+            r"(\d+) of (\d+) Complete matches \(([\d.]+)%\) contain internal stop codons",
+            text,
+        )
+        if hit:
+            numbers["internal_stop_n"] = int(hit.group(1))
+            numbers.setdefault("internal_stop_pct", float(hit.group(3)))
+        else:
+            # "114  Complete BUSCOs (C)  (of which 33 contain internal stop codons)"
+            hit = re.search(r"\(of which (\d+) contain internal stop codons\)", text)
+            if hit:
+                numbers["internal_stop_n"] = int(hit.group(1))
+
     # Last resort for the counts: the shares and the marker total give them back,
     # and a rounded count is better than a zero that reads like a real answer.
+    # Note that internal_stop_n is deliberately absent from the fallback below.
+    # It is a share of the complete matches, not of the markers, so working it
+    # back from n_markers would give a wrong number that looks right.
     total = numbers.get("n_markers", 0)
     if total and not numbers.get("complete_n"):
         for count_field, pct_field in (
@@ -368,6 +429,20 @@ def diagnose_failure(log_text: str) -> str | None:
             "it and does not have BUSCO installed. Put the BUSCO environment's "
             "bin first. The nagasm command has an absolute interpreter path, so "
             "it keeps working either way"
+        )
+
+    if "unable to run busco in offline mode" in log_text.lower():
+        # Offline mode cannot tell a name you have not downloaded from a name
+        # that does not exist, so say both rather than guess.
+        found = re.search(r"Dataset (\S+) does not exist", log_text)
+        where = f" at {found.group(1)}" if found else ""
+        return (
+            f"BUSCO was told to work offline but the lineage is not there{where}. "
+            "Either that folder does not hold this dataset yet, in which case run "
+            "busco --download <lineage> once with the network available, or the "
+            "name is wrong. Offline mode cannot tell those two apart, so check the "
+            "spelling against busco --list-datasets as well. Dropping "
+            "--busco-download-path lets BUSCO fetch it itself"
         )
 
     if "unable to download or update all necessary files" in log_text.lower():
@@ -441,7 +516,11 @@ def interpret(result: Completeness, scored_nuclear_only: bool = True) -> list[st
             "missing markers are absent from the reads as well, or only from the "
             "assembly, since those have different causes"
         )
-    elif result.complete_pct > 0:
+    else:
+        # Including an honest zero. A score of 0% used to fall through this
+        # branch and get no comment at all, which is the opposite of what it
+        # deserves. A zero that got this far is a real measurement, because
+        # run_busco refuses to build a result it could not read.
         notes.append(
             f"{result.complete_pct:.1f}% complete is low. Either the lineage is a poor "
             "match for this organism, or a large share of the genome is not in the "
@@ -453,6 +532,38 @@ def interpret(result: Completeness, scored_nuclear_only: bool = True) -> list[st
             f"{result.duplicated_pct:.1f}% of the markers turn up more than once. On a "
             "genome that has not been collapsed to one haplotype this is expected. If "
             "it is not that, it points at the same sequence assembled twice"
+        )
+
+    # The internal stop codons are the most useful thing BUSCO 6 reports for a
+    # long read assembly, and they say something no other number here says. A
+    # gene every eukaryote carries does not contain a stop codon in the middle,
+    # so when the prediction has one it is almost always a frameshift, which on
+    # nanopore data means an indel that polishing did not fix. This is base level
+    # accuracy, and completeness can look fine while it is bad.
+    #
+    # The thresholds below are rules of thumb rather than anything measured. A
+    # well polished assembly sits in the low single digits.
+    if result.internal_stop_pct >= 15:
+        notes.append(
+            f"{result.internal_stop_pct:.1f}% of the complete markers "
+            f"({result.internal_stop_n:,} of {result.complete_n:,}) have an internal "
+            "stop codon in their gene prediction. A conserved gene does not really "
+            "contain one, so these are frameshifts, which on long reads means "
+            "uncorrected indels. The genes are there and the bases under them are "
+            "not accurate enough. More polishing rounds, or a second polisher, "
+            "before anyone annotates this"
+        )
+    elif result.internal_stop_pct >= 5:
+        notes.append(
+            f"{result.internal_stop_pct:.1f}% of the complete markers have an internal "
+            "stop codon, which points at a residue of uncorrected indels. Worth one "
+            "more polishing round if the assembly is headed for annotation"
+        )
+    elif result.internal_stop_pct:
+        notes.append(
+            f"Only {result.internal_stop_pct:.1f}% of the complete markers have an "
+            "internal stop codon, so base level accuracy in the conserved genes "
+            "looks good"
         )
 
     if result.fragmented_pct >= 10:
@@ -549,9 +660,25 @@ def run_busco(
         )
 
     numbers = parse_summary(summary.read_text(errors="replace"))
+    # parse_summary returns an empty dict when it could not read the file, and
+    # every field on Completeness defaults to zero. Together those would report
+    # "Complete: 0.0%" for a run that actually succeeded, which is the one thing
+    # this module must never do: a score nobody could read is not a score of
+    # nothing. The parser is deliberately tolerant about which spelling of a
+    # field it finds, so reaching here means something genuinely unexpected.
+    if not numbers.get("n_markers"):
+        raise RuntimeError(
+            f"busco finished and wrote {summary}, but none of the numbers could be "
+            "read out of it. Rather than report a score of zero, which would look "
+            "like a measurement, this is being treated as a failure. The file is "
+            "worth a look, and a new BUSCO version having renamed its fields again "
+            "is the likely cause"
+        )
+
     result = Completeness(
         lineage=str(lineage),
         scored=fasta.name,
+        busco_version=busco_version() or "",
         outdir=str(outdir / name),
         **{k: v for k, v in numbers.items() if k in Completeness.__dataclass_fields__},
     )

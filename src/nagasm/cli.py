@@ -588,10 +588,13 @@ def _cmd_completeness(args) -> int:
     if path.name != "nuclear.fasta" and args.mode == "genome":
         # Worth saying out loud rather than quietly producing a number that reads
         # like a whole-assembly score. See completeness.py for why.
+        # On stderr, so it stays in order with any error that follows. On stdout
+        # it came out after the error, since stderr is unbuffered.
         print(
             f"Note: scoring {path.name}. BUSCO markers are single copy nuclear genes, "
             "so score the nuclear contigs on their own. Including the high copy "
-            "elements turns ordinary markers into false duplicates."
+            "elements turns ordinary markers into false duplicates.",
+            file=sys.stderr,
         )
 
     try:

@@ -454,3 +454,274 @@ def test_the_wrong_python_failure_names_the_path_order():
 def test_an_unrecognised_failure_gets_no_invented_explanation():
     assert completeness.diagnose_failure("something nobody has seen before") is None
     assert completeness.diagnose_failure("") is None
+
+
+def test_the_offline_failure_is_explained_and_names_both_causes():
+    # This is the message BUSCO gives both for a lineage you have not downloaded
+    # and for a name that does not exist. Offline mode cannot tell them apart, so
+    # the explanation must not pick one and sound certain.
+    log = (
+        "ERROR:\tUnable to run BUSCO in offline mode. Dataset "
+        "/data/busco_downloads/lineages/archaea_odb12 does not exist.\n"
+        "ERROR:\tBUSCO analysis failed!\n"
+    )
+    hint = completeness.diagnose_failure(log)
+    assert hint
+    assert "archaea_odb12" in hint, "the explanation should name the path BUSCO looked at"
+    assert "--download" in hint
+    assert "name is wrong" in hint
+
+
+def test_the_offline_failure_survives_a_message_with_no_path_in_it():
+    hint = completeness.diagnose_failure("Unable to run BUSCO in offline mode.")
+    assert hint and "--download" in hint
+
+
+# ------------------------------------------------------- recording the version
+#
+# The dataset generations are tied to the BUSCO version: BUSCO 5 scored
+# eukaryota_odb10 over 255 markers, BUSCO 6 scores eukaryota_odb12 over 125. A
+# score with no version beside it cannot be compared with anything later.
+
+
+def test_the_version_is_carried_on_the_result():
+    result = completeness.Completeness(
+        lineage="bacteria_odb12", scored="nuclear.fasta", busco_version="6.0.0"
+    )
+    assert "BUSCO 6.0.0" in "\n".join(result.summary_lines())
+
+
+def test_a_missing_version_does_not_print_an_empty_one():
+    result = completeness.Completeness(lineage="bacteria_odb12", scored="nuclear.fasta")
+    text = "\n".join(result.summary_lines())
+    assert "Scored by: BUSCO" in text
+    assert "BUSCO " not in text.split("\n")[0].replace("Scored by: BUSCO", "")
+
+
+def test_the_report_names_the_busco_version(tmp_path):
+    from nagasm import report
+
+    payload = {
+        "started": "today",
+        "completeness": completeness.Completeness(
+            lineage="bacteria_odb12",
+            scored="nuclear.fasta",
+            busco_version="6.0.0",
+            n_markers=116,
+            complete_pct=96.6,
+            complete_n=112,
+        ).as_dict(),
+    }
+    text = report.write_report(payload, tmp_path / "r.md").read_text()
+    assert "BUSCO 6.0.0" in text
+
+
+def test_the_report_is_fine_without_a_version(tmp_path):
+    from nagasm import report
+
+    payload = {
+        "started": "today",
+        "completeness": completeness.Completeness(
+            lineage="bacteria_odb12", scored="nuclear.fasta", n_markers=116
+        ).as_dict(),
+    }
+    text = report.write_report(payload, tmp_path / "r.md").read_text()
+    assert "Scored with BUSCO against" in text
+
+
+# --------------------------------- the eukaryote run, and internal stop codons
+#
+# These fixtures are a real BUSCO 6.0.0 run over the 28 Mb Naegleria assembly
+# with eukaryota_odb12. That run exposed three fields the parser was silently
+# dropping, one of which is the most useful number BUSCO reports for a long read
+# assembly, so they are pinned here.
+
+EUK_JSON = DATA / "busco6_eukaryote_summary.json"
+EUK_TEXT = DATA / "busco6_eukaryote_summary.txt"
+
+
+def test_the_eukaryote_json_parses_including_the_new_fields():
+    got = completeness.parse_summary(EUK_JSON.read_text())
+    assert got["n_markers"] == 129
+    assert got["complete_pct"] == pytest.approx(88.4)
+    assert got["complete_n"] == 114
+    assert got["missing_n"] == 11
+    assert got["internal_stop_pct"] == pytest.approx(28.9)
+    assert got["internal_stop_n"] == 33
+    assert got["avg_identity"] == pytest.approx(0.71)
+
+
+def test_the_eukaryote_text_parses_including_the_stop_codons():
+    # The text summary words it as "(of which 33 contain internal stop codons)",
+    # which is a different phrasing from the run log, and it carries the share
+    # only inside the one line summary.
+    got = completeness.parse_summary(EUK_TEXT.read_text())
+    assert got["n_markers"] == 129
+    assert got["complete_n"] == 114
+    assert got["internal_stop_n"] == 33
+    assert got["internal_stop_pct"] == pytest.approx(28.9)
+
+
+def test_the_trailing_e_field_does_not_break_the_marker_count():
+    # BUSCO 6 appends E: after n: on eukaryote runs. A regex that stopped at n:
+    # and was anchored would have missed the whole line.
+    got = completeness.parse_summary("C:88.4%[S:87.6%,D:0.8%],F:3.1%,M:8.5%,n:129,E:28.9%")
+    assert got["n_markers"] == 129
+    assert got["internal_stop_pct"] == pytest.approx(28.9)
+
+
+def test_a_prokaryote_run_has_no_stop_codon_field_and_that_is_fine():
+    got = completeness.parse_summary((DATA / "busco6_short_summary.json").read_text())
+    assert "internal_stop_pct" not in got or got["internal_stop_pct"] == 0.0
+    assert "avg_identity" not in got
+
+
+def test_the_stop_codon_count_is_never_guessed_from_the_marker_total():
+    # It is a share of the complete matches, not of the markers, so working it
+    # back from n_markers would produce a wrong number that looks plausible.
+    got = completeness.parse_summary("C:50.0%[S:50.0%,D:0.0%],F:0.0%,M:50.0%,n:100")
+    assert "internal_stop_n" not in got
+
+
+def test_a_high_internal_stop_share_says_to_polish():
+    result = completeness.Completeness(
+        lineage="eukaryota_odb12",
+        scored="nuclear.fasta",
+        n_markers=129,
+        complete_pct=88.4,
+        complete_n=114,
+        internal_stop_pct=28.9,
+        internal_stop_n=33,
+    )
+    notes = " ".join(completeness.interpret(result))
+    assert "frameshift" in notes
+    assert "polish" in notes.lower()
+    assert "28.9%" in notes
+
+
+def test_a_low_internal_stop_share_is_reported_as_good():
+    result = completeness.Completeness(
+        lineage="eukaryota_odb12",
+        scored="nuclear.fasta",
+        n_markers=129,
+        complete_pct=95.0,
+        internal_stop_pct=1.2,
+    )
+    notes = " ".join(completeness.interpret(result))
+    assert "looks good" in notes
+
+
+def test_no_internal_stop_field_means_no_note_about_it():
+    result = completeness.Completeness(
+        lineage="bacteria_odb12", scored="nuclear.fasta", n_markers=116, complete_pct=96.6
+    )
+    notes = " ".join(completeness.interpret(result))
+    assert "stop codon" not in notes
+
+
+def test_the_summary_lines_show_the_stop_codons_when_present():
+    result = completeness.Completeness(
+        lineage="eukaryota_odb12",
+        scored="nuclear.fasta",
+        n_markers=129,
+        internal_stop_pct=28.9,
+        internal_stop_n=33,
+        avg_identity=0.71,
+    )
+    text = "\n".join(result.summary_lines())
+    assert "internal stop codon" in text and "33" in text
+    assert "0.71" in text
+
+
+def test_the_summary_lines_stay_quiet_when_the_fields_are_absent():
+    result = completeness.Completeness(
+        lineage="bacteria_odb12", scored="nuclear.fasta", n_markers=116
+    )
+    text = "\n".join(result.summary_lines())
+    assert "stop codon" not in text and "identity" not in text
+
+
+# ------------------------------------- a report for a run whose nuclear step died
+
+
+def test_a_failed_nuclear_step_does_not_crash_the_report(tmp_path):
+    # This is the exact payload from a real run where Flye was not on PATH. The
+    # report writer assumed the engine key was always present and raised
+    # KeyError, which threw away a run that had already assembled every element.
+    from nagasm import report
+
+    payload = {
+        "started": "2026-10-29",
+        "nuclear": {"error": "these tools are needed but not installed: flye"},
+        "completeness": {"error": "there were no nuclear contigs to score"},
+    }
+    text = report.write_report(payload, tmp_path / "r.md").read_text()
+    assert "did not finish" in text
+    assert "flye" in text
+    assert "the rest of this report stands" in text
+
+
+def test_a_nuclear_step_missing_its_engine_key_still_reports(tmp_path):
+    from nagasm import report
+
+    payload = {"started": "today", "nuclear": {"stats": {}, "notes": []}}
+    text = report.write_report(payload, tmp_path / "r.md").read_text()
+    assert "## Nuclear assembly" in text
+
+
+# ------------------------------------- a score nobody can read is not a score
+
+
+def test_an_unreadable_summary_is_a_failure_not_a_score_of_zero(tmp_path, monkeypatch):
+    # The parser returning nothing plus every field defaulting to zero would
+    # together report "Complete: 0.0%" for a run that actually succeeded. That
+    # reads like a measurement and is the one thing this must never do.
+    fasta = tmp_path / "nuclear.fasta"
+    fasta.write_text(">c\n" + "ACGT" * 200 + "\n")
+    outdir = tmp_path / "out"
+    (outdir / "nuclear").mkdir(parents=True)
+    (outdir / "nuclear" / "short_summary.specific.x.nuclear.txt").write_text(
+        "BUSCO ran but this file says nothing a parser can use"
+    )
+
+    monkeypatch.setattr(completeness, "have_busco", lambda: True)
+    monkeypatch.setattr(
+        completeness.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 0})()
+    )
+    with pytest.raises(RuntimeError) as exc:
+        completeness.run_busco(fasta, outdir, lineage="bacteria_odb12")
+    assert "could not be read" in str(exc.value) or "could be read" in str(exc.value)
+    assert "zero" in str(exc.value)
+
+
+def test_a_readable_summary_still_goes_through(tmp_path, monkeypatch):
+    # The guard above must not reject a real summary.
+    fasta = tmp_path / "nuclear.fasta"
+    fasta.write_text(">c\n" + "ACGT" * 200 + "\n")
+    outdir = tmp_path / "out"
+    (outdir / "nuclear").mkdir(parents=True)
+    (outdir / "nuclear" / "short_summary.specific.bacteria_odb12.nuclear.json").write_text(
+        (DATA / "busco6_short_summary.json").read_text()
+    )
+
+    monkeypatch.setattr(completeness, "have_busco", lambda: True)
+    monkeypatch.setattr(completeness, "busco_version", lambda: "6.0.0")
+    monkeypatch.setattr(
+        completeness.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 0})()
+    )
+    result = completeness.run_busco(fasta, outdir, lineage="bacteria_odb12")
+    assert result.n_markers == 116
+    assert result.complete_pct == pytest.approx(96.6)
+    assert result.busco_version == "6.0.0"
+
+
+def test_an_honest_zero_percent_is_commented_on_loudly():
+    # A real 0% is the loudest signal BUSCO can give, usually a lineage that does
+    # not fit the organism at all. It used to fall through every branch and get
+    # no comment, which was the opposite of what it deserves.
+    result = completeness.Completeness(
+        lineage="metazoa_odb12", scored="nuclear.fasta", n_markers=932, complete_pct=0.0
+    )
+    notes = " ".join(completeness.interpret(result))
+    assert "0.0% complete is low" in notes
+    assert "poor" in notes and "match" in notes

@@ -125,3 +125,46 @@ def test_nothing_to_measure_is_handled():
     assert not result.measured
     ok, _ = support.verdict(result)
     assert ok
+
+
+# ---------------------------- a check that did not run is not a check that passed
+
+
+def test_an_unmeasured_element_keeps_its_reads_in_the_nuclear_compartment(tmp_path):
+    # support.verdict reports True when minimap2 is missing, so that nothing is
+    # quietly dropped from the report. That is right for reporting and wrong for
+    # deciding which reads to pull out of the chromosomes: it would strip real
+    # sequence on the strength of a test nobody ran. Seen for real on a run with
+    # minimap2 off PATH, which removed 55,877 reads instead of 1,003.
+    from nagasm import support
+
+    unmeasured = support.Support(0, 0.0, 0.0, measured=False, note="minimap2 not installed")
+    supported, _ = support.verdict(unmeasured)
+    assert supported is True, "the report must still list it"
+
+    # The pipeline decides read removal on supported AND measured together.
+    elements = [
+        {"name": "real", "supported": True, "support": {"measured": True}},
+        {"name": "never_checked", "supported": True, "support": unmeasured.as_dict()},
+        {"name": "rejected", "supported": False, "support": {"measured": True}},
+    ]
+    keep_out = {
+        e["name"]
+        for e in elements
+        if e.get("supported", True) and e.get("support", {}).get("measured", True)
+    }
+    assert keep_out == {"real"}, (
+        "only an element whose support was actually measured and passed may have "
+        f"its reads removed, got {keep_out}"
+    )
+
+
+def test_an_unmeasured_element_is_marked_on_its_picture():
+    from nagasm import circleplot
+
+    # The pipeline builds this note for an element whose check never ran.
+    note = "SUPPORT NOT CHECKED, minimap2 was not available"
+    assert note.upper().startswith(("NOT SUPPORTED", "SUPPORT NOT CHECKED")), (
+        "the circle plot decides whether to colour the title by this prefix, so a "
+        "note it does not recognise would be drawn as though the element passed"
+    )

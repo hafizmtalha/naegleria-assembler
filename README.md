@@ -748,21 +748,48 @@ nagasm completeness results/assembly/nuclear.fasta -l eukaryota_odb12 -t 8
 nagasm completeness --lineages
 ```
 
-Install it separately, because it is not in `environment.yml`, and **activate
-that environment** rather than only putting its `bin` on `PATH`:
+Install it separately, because it is not in `environment.yml`:
 
 ```bash
 mamba env create -f environment-busco.yml
-mamba activate nagasm-busco
 ```
 
-Activating matters for two reasons found the hard way. BUSCO's launcher starts
-with `#!/usr/bin/env python3`, so if another environment sits ahead of it on
-`PATH` then BUSCO runs under the wrong interpreter and dies with
-`No module named 'busco'`. And BUSCO shells out to BBMap, which is Java, and some
-conda openjdk builds put `java` in `lib/jvm/bin` rather than `bin`, so only the
-activation script puts it where BBMap can find it. The `nagasm` command itself is
-unaffected either way, because its launcher carries an absolute interpreter path.
+**Getting both environments visible at once takes care**, and the order matters.
+For the standalone `nagasm completeness` step, activating the BUSCO environment
+is enough:
+
+```bash
+mamba activate nagasm-busco
+nagasm completeness results/assembly/nuclear.fasta -l bacteria_odb12 -t 8
+```
+
+For a full `nagasm assemble --busco` run you need **both**, because the assembly
+still needs Flye, minimap2 and racon from the nagasm environment while BUSCO
+needs its own. BUSCO's bin has to come first:
+
+```bash
+BUSCO_ENV=$(conda info --base)/envs/nagasm-busco
+export JAVA_HOME=$BUSCO_ENV/lib/jvm
+export PATH=$BUSCO_ENV/bin:$BUSCO_ENV/lib/jvm/bin:$PATH
+conda activate nagasm      # nagasm's own tools, after BUSCO's bin
+nagasm assemble -l reads.fastq.gz -o results -t 8 --busco eukaryota_odb12
+```
+
+Three things make that necessary, all found by getting it wrong:
+
+* BUSCO's launcher starts with `#!/usr/bin/env python3`, so if another
+  environment sits ahead of it then BUSCO runs under the wrong interpreter and
+  dies with `No module named 'busco'`.
+* BUSCO shells out to BBMap, which is Java, and some conda openjdk builds put
+  `java` in `lib/jvm/bin` rather than `bin`, which is why `JAVA_HOME` and that
+  second path entry are there.
+* Activating only the BUSCO environment loses Flye, and the nuclear assembly
+  then cannot run at all.
+
+The `nagasm` command itself is unaffected by the order, because its launcher
+carries an absolute interpreter path. If you would rather not deal with any of
+this, assemble first and run `nagasm completeness` afterwards as a separate
+step. It gives the same answer.
 
 #### Three things that decide whether the number means anything
 
@@ -776,10 +803,11 @@ hand it something else.
 
 **The lineage is a compromise on this organism.** Naegleria sits in
 Heterolobosea, inside Discoba, and BUSCO has no set anywhere near that close.
-`eukaryota_odb12` is the honest choice at 125 markers shared across all
-eukaryotes, and it is very coarse. A good score on 125 broad markers is weak
+`eukaryota_odb12` is the honest choice at 129 markers shared across all
+eukaryotes, and it is very coarse. A good score on 129 broad markers is weak
 evidence that a 30 Mb genome is complete, and the report phrases it that way
-instead of calling the assembly finished. The nearest relative BUSCO does offer is
+instead of calling the assembly finished. (The dataset listing says 125. The
+dataset itself has 129. One more reason to trust the run over the listing.) The nearest relative BUSCO does offer is
 `euglenozoa_odb12`, the other main branch of Discoba, and at 2,579 markers it is
 far too specific to use on Naegleria. Nothing closer exists, which is worth
 stating rather than leaving someone to hunt for it.
@@ -855,8 +883,50 @@ Scored with BUSCO against **bacteria_odb12**, 116 markers, on `nuclear.fasta`.
 Counts sit beside shares because 95% of 116 markers and 95% of 2,000 markers are
 not the same evidence.
 
-Two things worth noticing in that result. **Zero duplicated markers** is the
-check working: this assembly separated the plasmids and the chromosomal repeats
+#### The number that matters most on long reads
+
+On a eukaryote run, BUSCO 6 also reports what share of the complete markers have
+an **internal stop codon** in their gene prediction. This turns out to be the
+most useful thing it tells you, and it says something no other number in this
+pipeline says.
+
+A gene that every eukaryote carries does not really contain a stop codon in the
+middle. When the prediction has one, it is almost always a frameshift, and on
+nanopore data a frameshift means an indel that polishing did not fix. So this is
+a measure of **base level accuracy**, and completeness can look perfectly healthy
+while it is bad.
+
+The real Naegleria assembly, 28 Mb over 65 contigs, scored against
+`eukaryota_odb12`:
+
+```
+Scored by: BUSCO 6.0.0
+Lineage: eukaryota_odb12 (129 markers)
+Complete: 88.4% (114)
+  of those, single copy: 87.6% (113)
+  of those, duplicated: 0.8% (1)
+Fragmented: 3.1% (4)
+Missing: 8.5% (11)
+Complete matches with an internal stop codon: 28.9% (33)
+Mean identity to the marker profiles: 0.71
+```
+
+88.4% complete reads like a decent assembly. But **28.9% of those complete genes
+have an internal stop codon**, which says the genes are in the right places and
+the bases under them are not accurate enough to annotate. Nothing else in this
+pipeline would have told you that. N50 is 714 kb and looks fine, every element
+passed its support check, and the base level error is still there.
+
+The report says so in those words, and suggests more polishing rounds before
+anyone annotates it. Below about 5% it says the opposite, that base level
+accuracy in the conserved genes looks good.
+
+This field is absent on prokaryote runs, where prodigal is used instead of
+miniprot, so nothing is said about it there.
+
+#### Two more things in the bacterial result
+
+**Zero duplicated markers** is the check working: this assembly separated the plasmids and the chromosomal repeats
 out into the elements file, so nothing got counted twice. And BUSCO independently
 reports the assembly as 5 contigs, 5,285,195 bp, N50 5,046,292, which matches what
 `nagasm stats` says exactly, so the two tools agree on the assembly they are
@@ -932,6 +1002,16 @@ out in `notes`. Those elements are still reported, and still written to the
 FASTA, because a tool that silently drops findings is worse than one that hands
 you a doubtful result with the numbers attached. They are simply not allowed to
 take reads away from the main assembly.
+
+**A check that did not run is not a check that passed.** If minimap2 is missing,
+the support check cannot run, and it reports every element as supported so that
+nothing disappears from the report. That is right for reporting and would be
+wrong for anything else, so an element whose support was never measured keeps its
+reads in the nuclear compartment and carries `SUPPORT NOT CHECKED` on its
+picture. Taking reads out of the chromosomes on the strength of a test nobody
+performed is how you quietly lose real sequence: on a run with minimap2 off PATH
+the old behaviour removed 55,877 reads instead of 1,003, about 44% of the nuclear
+compartment, and said nothing about it.
 
 ## Settings worth knowing
 
@@ -1010,7 +1090,7 @@ rust/src/
 
 ## Tests
 
-162 Python tests and 18 Rust tests. They take about twenty seconds.
+185 Python tests and 18 Rust tests. They take about twenty seconds.
 
 ```bash
 pytest
@@ -1020,13 +1100,13 @@ cd rust && cargo test --no-default-features
 | File | Tests | What it covers |
 |---|---|---|
 | `test_circular.py` | 27 | closing circles, rotating to a fixed start, overlaps |
-| `test_completeness.py` | 38 | reading BUSCO's real output, and what the score means |
+| `test_completeness.py` | 61 | reading BUSCO's real output, and what the score means |
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
 | `test_triage.py` | 22 | finding compartments, and refusing to invent them |
 | `test_plots.py` | 18 | the numbers behind karyotypes, dotplots and coverage |
 | `test_circleplot.py` | 18 | the ring values behind the circular pictures |
 | `test_olc.py` | 9 | the chromosome assembler, on clean data |
-| `test_support.py` | 7 | telling a real element from a chromosomal repeat |
+| `test_support.py` | 9 | telling a real element from a chromosomal repeat |
 
 Tests that need minimap2 skip themselves when it is missing, rather than fail.
 
@@ -1044,9 +1124,18 @@ while this was being got working: the md5 trap, the missing Java runtime and the
 wrong `python3` on `PATH`. One test asserts that an unrecognised error gets no
 invented explanation.
 
+`tests/data/` holds four summaries from two real runs: a prokaryote one
+(E. coli against `bacteria_odb12`, prodigal) and a eukaryote one (the 28 Mb
+Naegleria assembly against `eukaryota_odb12`, miniprot). Those are different
+code paths inside BUSCO and they report different fields, which is why both are
+pinned. The eukaryote fixture is what caught the parser silently dropping the
+internal stop codon count, and it is also why the stop codon count is parsed
+from two different spellings: the short summary and the run log word it
+differently.
+
 The tests themselves do not invoke BUSCO, so they pass whether or not it is
-installed. BUSCO running inside the pipeline **has** been verified end to end,
-by hand, on the E. coli assembly.
+installed. BUSCO running inside the pipeline **has** been verified end to end, by
+hand, on both organisms.
 
 **The ones worth knowing about.** Quite a few of these exist because the code
 failed them while it was being written, and three of them guard bugs that made

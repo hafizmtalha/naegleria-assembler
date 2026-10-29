@@ -369,9 +369,30 @@ def run(
             # element that failed that check is most likely a repeat living
             # inside the chromosome, and pulling its reads out would strip
             # real sequence from the assembly it belongs to.
+            # "Actually support" has to mean the check ran. When minimap2 is
+            # missing, support.verdict reports True so that nothing is quietly
+            # dropped from the report, which is right for reporting and wrong
+            # here: it would strip reads out of the chromosomes on the strength
+            # of a test nobody performed. Seen for real on a run where minimap2
+            # was off PATH, where it took out 55,877 reads instead of 1,003,
+            # about 44 percent of the nuclear compartment. So an element whose
+            # support was never measured keeps its reads in.
             supported_names = {
-                e["name"] for e in elements if e.get("supported", True)
+                e["name"]
+                for e in elements
+                if e.get("supported", True) and e.get("support", {}).get("measured", True)
             }
+            unmeasured = [
+                e["name"]
+                for e in elements
+                if not e.get("support", {}).get("measured", True)
+            ]
+            if unmeasured:
+                log(
+                    f"  the support check did not run for {len(unmeasured)} element(s), "
+                    "so their reads are being left in the nuclear compartment rather "
+                    "than removed on the strength of a test that never happened"
+                )
             keep_out = [r for r in element_records if r.name in supported_names]
             if keep_out and nuclear_long:
                 before = len(nuclear_long)
@@ -519,12 +540,18 @@ def _draw_plots(settings, outdir: Path, outputs: dict, payload: dict, reads, log
     drawn: list[Path] = []
 
     # An element that failed the support check is still drawn, because it is
-    # still reported, but the picture has to say so on its face.
+    # still reported, but the picture has to say so on its face. So does one
+    # whose support was never measured, which is a different thing from passing
+    # and would otherwise come out as a clean circle with nothing to warn you.
     notes = {}
     for element in payload.get("elements", []):
+        support_info = element.get("support", {})
+        if not support_info.get("measured", True):
+            notes[element["name"]] = "SUPPORT NOT CHECKED, minimap2 was not available"
+            continue
         if element.get("supported", True):
             continue
-        contained = element.get("support", {}).get("contained")
+        contained = support_info.get("contained")
         warning = "NOT SUPPORTED BY THE READS"
         if contained is not None:
             warning += f", only {contained:.0%} of each read lies inside it"

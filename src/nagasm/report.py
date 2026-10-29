@@ -274,8 +274,25 @@ def write_report(payload: dict[str, Any], path: Path) -> Path:
     if nuclear:
         add("## Nuclear assembly")
         add("")
-        add(f"Assembled with {nuclear['engine']} in {nuclear['mode']} mode.")
-        add("")
+        if nuclear.get("error"):
+            # The nuclear step records an error instead of an engine when it
+            # could not run at all, usually a missing Flye. Assuming the engine
+            # key was always there crashed the whole report writer, which threw
+            # away a run that had already found and polished every element.
+            add(f"This step did not finish: {nuclear['error']}")
+            add("")
+            add(
+                "The compartments above were still sorted and the high copy "
+                "elements above were still assembled, so the rest of this report "
+                "stands. Only the chromosomes are missing."
+            )
+            add("")
+        else:
+            add(
+                f"Assembled with {nuclear.get('engine', 'an unrecorded engine')} in "
+                f"{nuclear.get('mode', 'an unrecorded')} mode."
+            )
+            add("")
         stats = nuclear.get("stats", {})
         if stats:
             add(f"* Contigs: {stats['n_contigs']:,}")
@@ -299,9 +316,13 @@ def write_report(payload: dict[str, Any], path: Path) -> Path:
             )
             add("")
         else:
+            version = busco.get("busco_version")
+            tool = f"BUSCO {version}" if version else "BUSCO"
             add(
-                f"Scored with BUSCO against **{busco.get('lineage', 'an unnamed lineage')}**, "
-                f"{busco.get('n_markers', 0):,} markers, on `{busco.get('scored', 'the assembly')}`."
+                f"Scored with {tool} against "
+                f"**{busco.get('lineage', 'an unnamed lineage')}**, "
+                f"{busco.get('n_markers', 0):,} markers, on "
+                f"`{busco.get('scored', 'the assembly')}`."
             )
             add("")
             add("| | Share | Count |")
