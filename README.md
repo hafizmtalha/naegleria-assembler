@@ -1090,12 +1090,25 @@ rust/src/
 
 ## Tests
 
-185 Python tests and 18 Rust tests. They take about twenty seconds.
+185 Python tests and 18 Rust tests. All of them pass.
 
 ```bash
 pytest
 cd rust && cargo test --no-default-features
 ```
+
+The Python suite takes about 22 seconds. The Rust tests run in well under a
+second once built, but the first build has to compile pyo3 and rayon, so expect
+a few minutes that one time.
+
+The `--no-default-features` flag matters. The normal build is a Python extension
+module, which never links libpython because the interpreter is already in memory
+when it loads. `cargo test` builds a plain executable instead, so it does have to
+link it. `rust/build.rs` asks the interpreter that is building you where its
+library folder is and writes that into the test binary, which is why the command
+above works on its own. Without that the tests compile and then stop before the
+first one runs, with `dyld: Library not loaded: @rpath/libpython3.12.dylib`,
+which looks like a broken build and is only a missing path.
 
 | File | Tests | What it covers |
 |---|---|---|
