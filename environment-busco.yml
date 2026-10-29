@@ -32,6 +32,20 @@
 #     busco --download bacteria_odb12
 #     nagasm assemble ... --busco bacteria_odb12 --busco-download-path busco_downloads
 #
+# --- The dataset itself is a version too, and you cannot pin it here ----------
+#
+# BUSCO fetches whichever dataset is current when you run it. Conda has no say
+# in that, so this file cannot hold it. The scores in the README came from:
+#
+#     bacteria_odb12   created 2026-05-22   116 markers
+#     eukaryota_odb12  created 2026-05-22   129 markers
+#
+# Every run prints its dataset and date into
+# short_summary.specific.<lineage>.<name>.json, under lineage_dataset. Keep that
+# file if the score is going in a paper. Two different datasets give two
+# different scores for the same assembly, and without the date nobody can tell
+# which one you used.
+#
 # --- Two pins and two extras that are all here for a reason ------------------
 #
 # sepp: BUSCO's own guide warns that 4.5.6 is incompatible with its automatic
@@ -54,5 +68,16 @@ dependencies:
   - python=3.12
   - busco=6.0.0
   - sepp=4.5.5
-  - bbmap
-  - openjdk
+  - bbmap=39.52
+  - openjdk=25.0.2
+
+  # These four come in as BUSCO's own dependencies, so pinning busco alone does
+  # not pin them. They are pinned here because they are the ones that produced
+  # the numbers in the README. The gene predictor matters more than it looks:
+  # miniprot is what finds the genes on a eukaryote assembly, and a different
+  # version of it would change the internal stop codon share, which is the one
+  # number we lean on most.
+  - metaeuk=7.bba0d80
+  - miniprot=0.18
+  - prodigal=2.6.3
+  - hmmer=3.4

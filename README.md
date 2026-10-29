@@ -1037,6 +1037,44 @@ and get thrown away, which leaves too few to take a median of. On the real
 nanopore data the default produced nonsense, and the tool said so in its warnings.
 Dropping to 20 fixed it completely.
 
+## Versions
+
+Everything is pinned, so you can get the same software we ran rather than
+whatever is current on the day you install.
+
+| Where | What it pins |
+|---|---|
+| `environment.yml` | Python 3.12, rust 1.99.0, and every tool: flye 2.9.6, minimap2 2.31, racon 1.5.0, spades 4.3.0, samtools 1.24, seqkit 2.14.0, numpy 2.1.3, scipy 1.14.1, matplotlib 3.9.2, snakemake 9.27.1, pytest 8.3.3 |
+| `environment-busco.yml` | busco 6.0.0, sepp 4.5.5, bbmap 39.52, openjdk 25.0.2, and the gene predictors: miniprot 0.18, metaeuk 7.bba0d80, prodigal 2.6.3, hmmer 3.4 |
+| `rust/Cargo.lock` | pyo3 0.22.6, rayon 1.12.0, rustc-hash 2.1.3, and everything underneath them |
+
+So this installs what we used:
+
+```bash
+mamba env create -f environment.yml
+mamba env create -f environment-busco.yml   # only if you want --busco
+```
+
+The `sepp` pin is not fussiness. BUSCO's own guide warns that 4.5.6 picks the
+wrong lineage without saying so, which is the worst kind of bug because it
+finishes and the number is wrong. The gene predictor pins matter for the same
+reason: miniprot finds the genes on a eukaryote assembly, and a different version
+would move the internal stop codon share, which is the number this pipeline leans
+on hardest.
+
+`pyproject.toml` is looser on purpose, with `numpy>=1.26` and friends, because
+that is what gets installed when someone pip installs this as a library into an
+environment of their own. The conda files are the reproducible path, not that.
+
+**One version you cannot pin.** BUSCO downloads whichever lineage dataset is
+current when it runs, and no conda file has a say in that. The scores here came
+from `bacteria_odb12` and `eukaryota_odb12`, both created 2026-05-22, holding 116
+and 129 markers. Every run writes its dataset and date into
+`short_summary.specific.<lineage>.<name>.json` under `lineage_dataset`, so keep
+that file if a score is going anywhere that matters. Two datasets give two
+different scores for one assembly, and without the date nobody can tell which you
+used.
+
 ## Where it falls short
 
 Said plainly, because a tool that hides this is worse than useless.
