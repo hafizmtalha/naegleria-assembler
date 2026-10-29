@@ -69,15 +69,17 @@ Roughly, and counting lines of code that are not blank or comment:
 |---|---|---|
 | Sorting reads into compartments | 454 | ours |
 | Assembling the small circles | 686 | ours |
-| Checking the reads support an element | 177 | ours |
+| Checking the reads support an element | 223 | ours |
 | A chromosome assembler, for reading | 176 | ours, and not competitive |
 | k-mer counting and sketching, in Rust | 804 | ours |
 | Handing nuclear reads to Flye or SPAdes | 244 | a wrapper |
 | Polishing with minimap2 and racon | 176 | a wrapper |
-| Scoring gene content with BUSCO | 297 | a wrapper, and optional |
+| Scoring gene content with BUSCO | 527 | a wrapper, optional, and mostly about what the score means |
 
-So about 2,300 lines of method and about 720 lines of wrapper, plus the
-plumbing that reports it all. Useful to know before you decide whether to
+So about 2,340 lines of method and about 950 lines of wrapper, plus the
+plumbing that reports it all. The BUSCO file is the odd one out: it is a thin
+wrapper around someone else's tool, and most of its length is the notes on what
+a score does and does not show. Useful to know before you decide whether to
 trust it, and useful to know which part to blame when something goes wrong.
 
 ## The question it answers
@@ -1113,7 +1115,7 @@ which looks like a broken build and is only a missing path.
 | File | Tests | What it covers |
 |---|---|---|
 | `test_circular.py` | 27 | closing circles, rotating to a fixed start, overlaps |
-| `test_completeness.py` | 61 | reading BUSCO's real output, and what the score means |
+| `test_completeness.py` | 59 | reading BUSCO's real output, and what the score means |
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
 | `test_triage.py` | 22 | finding compartments, and refusing to invent them |
 | `test_plots.py` | 18 | the numbers behind karyotypes, dotplots and coverage |
