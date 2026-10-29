@@ -369,14 +369,15 @@ def run(
             # element that failed that check is most likely a repeat living
             # inside the chromosome, and pulling its reads out would strip
             # real sequence from the assembly it belongs to.
-            # "Actually support" has to mean the check ran. When minimap2 is
-            # missing, support.verdict reports True so that nothing is quietly
-            # dropped from the report, which is right for reporting and wrong
-            # here: it would strip reads out of the chromosomes on the strength
-            # of a test nobody performed. Seen for real on a run where minimap2
-            # was off PATH, where it took out 55,877 reads instead of 1,003,
-            # about 44 percent of the nuclear compartment. So an element whose
-            # support was never measured keeps its reads in.
+            # "Really support" has to mean the check actually ran. When
+            # minimap2 is missing it cannot run, and support.verdict then says
+            # True so that no element quietly vanishes from the report. That is
+            # the right call for the report. It is the wrong call here, because
+            # it would pull reads out of the chromosomes on the strength of a
+            # test nobody did. This happened on a run with minimap2 off PATH. It
+            # took out 55,877 reads instead of 1,003, which is about 44 percent
+            # of the nuclear compartment. So an element whose support was never
+            # measured keeps its reads.
             supported_names = {
                 e["name"]
                 for e in elements
@@ -540,9 +541,9 @@ def _draw_plots(settings, outdir: Path, outputs: dict, payload: dict, reads, log
     drawn: list[Path] = []
 
     # An element that failed the support check is still drawn, because it is
-    # still reported, but the picture has to say so on its face. So does one
-    # whose support was never measured, which is a different thing from passing
-    # and would otherwise come out as a clean circle with nothing to warn you.
+    # still reported, but the picture has to say so on its face. The same goes
+    # for one whose support was never measured. That is not the same as passing,
+    # and it would otherwise come out as a tidy circle with no warning on it.
     notes = {}
     for element in payload.get("elements", []):
         support_info = element.get("support", {})

@@ -587,7 +587,7 @@ def _cmd_completeness(args) -> int:
     path = Path(args.fasta)
     if path.name != "nuclear.fasta" and args.mode == "genome":
         # Worth saying out loud rather than quietly producing a number that reads
-        # like a whole-assembly score. See completeness.py for why.
+        # like a score for the whole assembly. See completeness.py for why.
         # On stderr, so it stays in order with any error that follows. On stdout
         # it came out after the error, since stderr is unbuffered.
         print(

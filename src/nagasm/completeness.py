@@ -59,19 +59,19 @@ from pathlib import Path
 # most papers quote and what this module first defaulted to, is not a name BUSCO
 # 6 will accept.
 #
-# Second, and worse, `busco --list-datasets` prints names ending `_odb12.2`, but
-# those are the OrthoDB release label rather than the dataset name. Ask for
-# `bacteria_odb12.2` and BUSCO builds the download URL for `bacteria_odb12`,
-# fetches the right 58 MB file, then checks it against the md5 on the
-# `bacteria_odb12.2` row of its own manifest, which is a different hash. It fails
-# with "md5 hash is incorrect" and deletes the file, which reads like a corrupt
-# download and is not one. The name to pass is `bacteria_odb12`, with no `.2`.
-# See _normalise_lineage below, which strips it for you.
+# Second, and worse, `busco --list-datasets` prints names ending `_odb12.2`.
+# That trailing number is the OrthoDB release. It is not part of the dataset
+# name. Here is what happens if you pass it anyway. BUSCO builds the download
+# address from `bacteria_odb12` and fetches the right 58 MB file. Then it checks
+# that file against the md5 listed for `bacteria_odb12.2`, which is a different
+# hash. So it says "md5 hash is incorrect" and deletes the file. The file was
+# never broken. The name to pass is `bacteria_odb12`, with no `.2`. See
+# _clean_lineage_name below, which takes it off for you.
 #
-# The marker counts are the ones BUSCO itself reports, not estimates. On BUSCO 5
-# you want the odb10 spellings and different counts: eukaryota_odb10 held 255
-# markers where eukaryota_odb12 holds 125. The two generations score the same
-# assembly differently, so whichever you use, say which one in the methods.
+# The marker counts below are the ones BUSCO itself reports, not estimates. On
+# BUSCO 5 you want the odb10 names, and the counts differ too: eukaryota_odb10
+# held 255 markers where eukaryota_odb12 holds 125. The two sets score the same
+# assembly differently. So whichever you use, say which one in the methods.
 DEFAULT_LINEAGE = "eukaryota_odb12"
 
 SUGGESTED_LINEAGES = {
@@ -95,7 +95,7 @@ SUGGESTED_LINEAGES = {
 _RELEASE_LABEL = re.compile(r"^(?P<name>.+_odb\d+)\.\d+$")
 
 
-def _normalise_lineage(lineage: str) -> tuple[str, str | None]:
+def _clean_lineage_name(lineage: str) -> tuple[str, str | None]:
     """Turn a name copied out of `--list-datasets` into one BUSCO will accept.
 
     Returns the name to use and, when something was changed, a note explaining
@@ -142,7 +142,9 @@ class Completeness:
     """
 
     lineage: str
-    scored: str  # which file was scored, so a score is never read as whole-assembly
+    # Which file was scored. Kept so that a score for one part of the
+    # assembly is never read as a score for all of it.
+    scored: str
     # Which BUSCO produced this. Worth recording rather than inferring, because
     # the dataset generations are tied to it: BUSCO 5 scored eukaryota_odb10 over
     # 255 markers where BUSCO 6 scores eukaryota_odb12 over 125. A score with no
@@ -159,12 +161,13 @@ class Completeness:
     duplicated_n: int = 0
     fragmented_n: int = 0
     missing_n: int = 0
-    # BUSCO 6 reports these on eukaryote runs and they are the most actionable
-    # numbers it produces for a long read assembly. An internal stop codon in a
-    # gene that every eukaryote carries is almost never real biology, it is a
-    # frameshift, which on nanopore data means an uncorrected indel. A high share
-    # here says the bases need more polishing even when completeness looks fine,
-    # and completeness alone would never show it.
+    # BUSCO 6 fills these in on eukaryote runs. For a long read assembly they are
+    # the numbers most worth acting on. A gene that every eukaryote carries
+    # almost never really has a stop codon partway through it. What you are
+    # seeing is a frameshift, and on nanopore reads that means an indel nobody
+    # corrected. So a high share here says the bases want more polishing, even
+    # when the completeness figure looks fine. Completeness on its own would
+    # never tell you.
     internal_stop_pct: float = 0.0
     internal_stop_n: int = 0
     avg_identity: float = 0.0
@@ -534,15 +537,16 @@ def interpret(result: Completeness, scored_nuclear_only: bool = True) -> list[st
             "it is not that, it points at the same sequence assembled twice"
         )
 
-    # The internal stop codons are the most useful thing BUSCO 6 reports for a
-    # long read assembly, and they say something no other number here says. A
-    # gene every eukaryote carries does not contain a stop codon in the middle,
-    # so when the prediction has one it is almost always a frameshift, which on
-    # nanopore data means an indel that polishing did not fix. This is base level
-    # accuracy, and completeness can look fine while it is bad.
+    # On a long read assembly this is the most useful thing BUSCO 6 reports. It
+    # tells you something no other number here does. A gene that every eukaryote
+    # carries does not have a stop codon in the middle of it. So when the gene
+    # prediction shows one, it is nearly always a frameshift. On nanopore reads a
+    # frameshift means an indel that polishing did not fix. In other words this
+    # measures how right the bases are, and the bases can be poor while
+    # completeness still looks healthy.
     #
-    # The thresholds below are rules of thumb rather than anything measured. A
-    # well polished assembly sits in the low single digits.
+    # The cutoffs below are rules of thumb, not measured values. A well polished
+    # assembly sits in the low single digits.
     if result.internal_stop_pct >= 15:
         notes.append(
             f"{result.internal_stop_pct:.1f}% of the complete markers "
@@ -616,7 +620,7 @@ def run_busco(
             "guide warns that 4.5.6 picks the wrong lineage without saying so"
         )
 
-    lineage, renamed = _normalise_lineage(str(lineage))
+    lineage, renamed = _clean_lineage_name(str(lineage))
     extra_notes = [renamed] if renamed else []
 
     outdir.mkdir(parents=True, exist_ok=True)
@@ -664,8 +668,8 @@ def run_busco(
     # every field on Completeness defaults to zero. Together those would report
     # "Complete: 0.0%" for a run that actually succeeded, which is the one thing
     # this module must never do: a score nobody could read is not a score of
-    # nothing. The parser is deliberately tolerant about which spelling of a
-    # field it finds, so reaching here means something genuinely unexpected.
+    # nothing. The parser already accepts several spellings of every field, so
+    # getting here means something nobody has seen before.
     if not numbers.get("n_markers"):
         raise RuntimeError(
             f"busco finished and wrote {summary}, but none of the numbers could be "

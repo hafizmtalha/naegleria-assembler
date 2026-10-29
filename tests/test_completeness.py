@@ -398,18 +398,18 @@ def test_an_orthodb_release_suffix_is_stripped():
     # download URL from bacteria_odb12 and then checks the hash listed against
     # bacteria_odb12.2. The file is fine, the comparison is not, and it fails
     # with "md5 hash is incorrect" after fetching 58 MB.
-    name, note = completeness._normalise_lineage("bacteria_odb12.2")
+    name, note = completeness._clean_lineage_name("bacteria_odb12.2")
     assert name == "bacteria_odb12"
     assert note and "md5" in note
 
 
 def test_a_plain_lineage_name_is_left_alone():
-    assert completeness._normalise_lineage("bacteria_odb12") == ("bacteria_odb12", None)
-    assert completeness._normalise_lineage("eukaryota_odb10") == ("eukaryota_odb10", None)
+    assert completeness._clean_lineage_name("bacteria_odb12") == ("bacteria_odb12", None)
+    assert completeness._clean_lineage_name("eukaryota_odb10") == ("eukaryota_odb10", None)
 
 
 def test_a_path_to_a_lineage_is_not_rewritten():
-    name, note = completeness._normalise_lineage("/data/lineages/bacteria_odb12.2")
+    name, note = completeness._clean_lineage_name("/data/lineages/bacteria_odb12.2")
     assert name == "/data/lineages/bacteria_odb12.2"
     assert note is None
 
@@ -418,7 +418,7 @@ def test_the_suggested_lineages_are_all_names_busco_6_accepts():
     # Every one of these was checked against busco --list-datasets on 6.0.0.
     # None may carry a release suffix, since that is the failure above.
     for name in completeness.SUGGESTED_LINEAGES:
-        assert completeness._normalise_lineage(name) == (name, None), name
+        assert completeness._clean_lineage_name(name) == (name, None), name
     assert completeness.DEFAULT_LINEAGE in completeness.SUGGESTED_LINEAGES
 
 

@@ -1148,7 +1148,7 @@ builds a synthetic chromosome holding eight copies of one 3 kb repeat, samples
 reads from it, then asks the support check whether that repeat is a separate
 molecule. The honest answer is no. That test failed the first version of the
 containment metric, which scored the repeat at 0.77 contained and happily
-accepted it, and failing is what showed the metric was normalising by the wrong
+accepted it, and failing is what showed the metric was dividing by the wrong
 length. It is the reason the current version divides by the full read length.
 
 A plot test is easy to write badly, so the plot tests check the numbers behind

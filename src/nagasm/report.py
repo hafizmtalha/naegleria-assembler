@@ -275,10 +275,11 @@ def write_report(payload: dict[str, Any], path: Path) -> Path:
         add("## Nuclear assembly")
         add("")
         if nuclear.get("error"):
-            # The nuclear step records an error instead of an engine when it
-            # could not run at all, usually a missing Flye. Assuming the engine
-            # key was always there crashed the whole report writer, which threw
-            # away a run that had already found and polished every element.
+            # When the nuclear step cannot run at all, usually because Flye is
+            # missing, it records an error instead of an engine. Taking the
+            # engine key for granted used to crash the whole report writer. That
+            # threw away a run which had already found and polished every
+            # element.
             add(f"This step did not finish: {nuclear['error']}")
             add("")
             add(

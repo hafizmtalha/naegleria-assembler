@@ -489,9 +489,10 @@ def plot_circle(
     # whole title turns the warning colour so nobody mistakes it for one that
     # passed. Colouring only the warning line meant placing a second text box
     # by hand, and it landed on top of the title.
-    # Both a failed check and a check that never ran have to show. The second is
-    # not a verdict of fake, but it is not a pass either, and a clean looking
-    # circle is exactly how someone comes to believe in one.
+    # Two things have to show here. One is a check that failed. The other is a
+    # check that never ran. The second is not a verdict of fake, but it is not a
+    # pass either, and a tidy looking circle is just how someone ends up
+    # believing in one.
     failed = note.upper().startswith(("NOT SUPPORTED", "SUPPORT NOT CHECKED"))
     if note:
         caption += f"\n{note}"
