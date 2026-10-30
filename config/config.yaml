@@ -4,9 +4,18 @@
 # --- Where the reads are ----------------------------------------------------
 # Leave a list empty if you do not have that kind of read. The pipeline works
 # with long reads on their own, short reads on their own, or both together.
+#
+# This points at the simulated set by default, so a fresh clone can run. Build
+# it first, which takes a few seconds:
+#
+#     python scripts/make_test_data.py
+#
+# Then point this at your own reads. Note that read files are not kept in the
+# repository, so a path here that nobody has built yet is the usual reason
+# snakemake stops before it starts.
 reads:
   long:
-    - data/real/ont_subset.fastq.gz
+    - data/simulated/reads.fastq.gz
   short: []
 
 # What the long reads came off. One of: ont, ont-hq, hifi, pacbio.
@@ -22,10 +31,21 @@ triage:
   # is destroyed less often.
   k: 21
 
-  # Keep about one k-mer in this many when counting. This is the memory knob.
-  # 100 is plenty for long reads and keeps the table about a hundred times
-  # smaller. Use 10 or 20 for short reads, which contribute fewer k-mers each.
-  scale: 100
+  # Keep about one k-mer in this many when counting. This is the memory knob,
+  # and it is also the setting most likely to give you a wrong answer, so it is
+  # worth reading this before changing it.
+  #
+  # A high number keeps fewer k-mers and uses less memory. The catch is that
+  # each read then contributes only a few dozen sampled k-mers, and if the reads
+  # are noisy most of those carry an error and get thrown away. That leaves too
+  # few to take a median of, and the compartments stop separating. On real
+  # nanopore data a setting of 100 produced nonsense and 20 fixed it.
+  #
+  # So 20 is the default here, because noisy long reads are the common case and
+  # the simulated data this config points at has a 6 percent error rate. Raise
+  # it to 100 if your reads are accurate, such as HiFi, or if memory is tight
+  # and you have checked the depth plot still shows clean humps.
+  scale: 20
 
   # How much a hump has to stand out from its surroundings to count as a
   # compartment, in log10 units. 0.15 means about one and a half fold. Lower

@@ -479,6 +479,48 @@ conda activate nagasm
 maturin develop --release
 ```
 
+### Test data, so the examples run
+
+No read files live in this repository, because they are too big for git and the
+public ones need downloading first. So there is a script that builds a small set
+instead. It takes a few seconds and writes about 6 MB.
+
+```bash
+python scripts/make_test_data.py
+```
+
+That gives you `data/simulated/reads.fastq.gz`, which every example below works
+on, and which `config/config.yaml` already points at so `snakemake` runs on a
+fresh clone. It is seeded, so the same command always gives the same reads.
+
+The fake genome has the shape this pipeline is about: a 410 kb chromosome at 35x
+with a 1.2 kb repeat in eight places, and a 6 kb circle at 900x. Reads carry 6
+percent error with indels twice as common as substitutions, which is roughly
+nanopore and is the part that actually troubles an assembler.
+
+A good run on it finds one high copy compartment, closes a circle of about
+6,000 bp, accepts it with containment near 0.99, and brings the chromosome back
+in one contig of about 409,000 bp. Measured, not hoped for:
+
+```
+nuclear       17x    1x   373,200 bp   1,696 reads   41.0%
+high_copy_1  249x   15x     4,640 bp     589 reads   46.4%
+
+high_copy_1_1_circular: 5,999 bp, closed into a circle   contained 0.992
+1 contigs, 408,800 bp, N50 408,800 bp
+```
+
+The truth sequences are written alongside the reads, so you can check what came
+out against what went in. The circle comes back at 100 percent identity.
+
+**What it does not test.** It will not show you the support check rejecting
+anything, and the script says so at length. The elements that get rejected on
+real data are mosaics, stitched out of several copies of a repeat, which is why
+no single read covers much of them and why they score 0.10 to 0.14. A simulated
+repeat is one identical block, so reads either cover all of it or stay in the
+nuclear compartment where they belong, and no fake element is built. For the
+rejection, read the E. coli example further down, which is real.
+
 Look at your reads before assembling them. This takes about ten seconds and tells
 you whether the compartments are really there.
 
