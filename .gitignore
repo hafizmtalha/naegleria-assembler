@@ -8,9 +8,11 @@ __pycache__/
 dist/
 build/
 
-# Pipeline output
-data/
-results/
+# Pipeline output. The leading slash matters: "data/" with no slash matches any
+# directory called data at any depth, which quietly swallowed tests/data and its
+# BUSCO fixtures, so eight tests passed here and failed on a fresh clone.
+/data/
+/results/
 logs/
 .snakemake/
 
