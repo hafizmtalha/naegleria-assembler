@@ -1172,14 +1172,14 @@ rust/src/
 
 ## Tests
 
-185 Python tests and 18 Rust tests. All of them pass.
+201 Python tests and 18 Rust tests. All of them pass.
 
 ```bash
 pytest
 cd rust && cargo test --no-default-features
 ```
 
-The Python suite takes about 22 seconds. The Rust tests run in well under a
+The Python suite takes about 45 seconds. The Rust tests run in well under a
 second once built, but the first build has to compile pyo3 and rayon, so expect
 a few minutes that one time.
 
@@ -1196,6 +1196,7 @@ which looks like a broken build and is only a missing path.
 |---|---|---|
 | `test_circular.py` | 27 | closing circles, rotating to a fixed start, overlaps |
 | `test_completeness.py` | 59 | reading BUSCO's real output, and what the score means |
+| `test_make_test_data.py` | 16 | the simulated data has the shape a run needs |
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
 | `test_triage.py` | 22 | finding compartments, and refusing to invent them |
 | `test_plots.py` | 18 | the numbers behind karyotypes, dotplots and coverage |

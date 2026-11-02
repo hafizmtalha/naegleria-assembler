@@ -74,6 +74,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import io
 import random
 from pathlib import Path
 
@@ -191,11 +192,22 @@ def write_fastq(path: Path, reads: list[str], prefix: str, quality: str = "I") -
     The quality string is the same letter all the way along. Nothing in this
     pipeline reads quality scores, so inventing a believable pattern would be
     effort spent on something no code looks at.
+
+    Written through GzipFile with mtime set to zero rather than gzip.open,
+    because gzip puts the current time in its header and gzip.open gives you no
+    way to stop it. Two runs of this script then produce files with the same
+    reads inside and different bytes outside, which breaks the promise that the
+    same seed gives the same file. Passing a file object rather than a name also
+    keeps the name out of the header, for the same reason.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(path, "wt") as handle:
-        for i, read in enumerate(reads, 1):
-            handle.write(f"@{prefix}_{i} length={len(read)}\n{read}\n+\n{quality * len(read)}\n")
+    with open(path, "wb") as raw:
+        with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as packed:
+            with io.TextIOWrapper(packed, encoding="utf-8") as handle:
+                for i, read in enumerate(reads, 1):
+                    handle.write(
+                        f"@{prefix}_{i} length={len(read)}\n{read}\n+\n{quality * len(read)}\n"
+                    )
 
 
 def write_fasta(path: Path, records: list[tuple[str, str]], wrap: int = 70) -> None:
@@ -256,15 +268,25 @@ def main() -> int:
     parser.add_argument(
         "--small",
         action="store_true",
-        help="a quarter the size, for a quick check. Too small for Flye, so use "
-        "--skip-nuclear with it",
+        help="a smaller, quicker set: a 100 kb chromosome and a shallower circle, "
+        "with shorter reads. Still shows the compartments separating. Too small "
+        "for Flye to assemble, so run it with --skip-nuclear",
     )
     args = parser.parse_args()
 
     if args.small:
-        args.chromosome //= 4
-        args.depth = 25.0
-        args.element_depth = 600.0
+        # Shrinking the chromosome on its own does not work, and the first
+        # version of this did exactly that. Keep the circle at 600x over a
+        # 100 kb chromosome and the circle supplies most of the reads, so the
+        # depth sorting takes the circle for the nuclear peak, finds no high
+        # copy compartment at all, and the run demonstrates nothing while still
+        # exiting cleanly. The chromosome has to stay the bigger read
+        # population, so its depth comes down with it, and the reads get shorter
+        # so a 100 kb chromosome still sees a few hundred of them.
+        args.chromosome = 100_000
+        args.depth = 30.0
+        args.element_depth = 200.0
+        args.read_length = min(args.read_length, 5_000)
 
     if args.element_depth <= args.depth * 4:
         parser.error(
