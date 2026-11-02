@@ -725,3 +725,35 @@ def test_an_honest_zero_percent_is_commented_on_loudly():
     notes = " ".join(completeness.interpret(result))
     assert "0.0% complete is low" in notes
     assert "poor" in notes and "match" in notes
+
+
+def test_the_fixtures_are_actually_committed():
+    """The fixtures above are useless if they only exist on one machine.
+
+    They did, for a while. .gitignore said "data/", and a pattern with no leading
+    slash matches a directory of that name at any depth, so it matched tests/data
+    as well as the top level data folder. git add -A skipped these files every
+    time without a word, eight tests passed locally, and the same eight failed on
+    a fresh clone. This asks git directly, so the next time something quietly
+    stops being committed a test says so instead of a stranger finding out.
+    """
+    import subprocess
+
+    for name in (
+        "busco6_short_summary.json",
+        "busco6_short_summary.txt",
+        "busco6_eukaryote_summary.json",
+        "busco6_eukaryote_summary.txt",
+    ):
+        path = DATA / name
+        assert path.exists(), f"{name} is missing from {DATA}"
+        out = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(path)],
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+        assert out.returncode == 0, (
+            f"{name} exists but git is not tracking it, so it will not be in a "
+            "clone and the tests that read it will fail for everyone else"
+        )

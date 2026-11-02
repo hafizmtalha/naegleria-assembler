@@ -1172,7 +1172,8 @@ rust/src/
 
 ## Tests
 
-201 Python tests and 18 Rust tests. All of them pass.
+202 Python tests and 18 Rust tests. All of them pass, on a fresh clone as well
+as here, which is not the same thing and was worth checking.
 
 ```bash
 pytest
@@ -1195,7 +1196,7 @@ which looks like a broken build and is only a missing path.
 | File | Tests | What it covers |
 |---|---|---|
 | `test_circular.py` | 27 | closing circles, rotating to a fixed start, overlaps |
-| `test_completeness.py` | 59 | reading BUSCO's real output, and what the score means |
+| `test_completeness.py` | 60 | reading BUSCO's real output, and what the score means |
 | `test_make_test_data.py` | 16 | the simulated data has the shape a run needs |
 | `test_seqio_and_stats.py` | 23 | reading and writing FASTA and FASTQ, N50 |
 | `test_triage.py` | 22 | finding compartments, and refusing to invent them |
