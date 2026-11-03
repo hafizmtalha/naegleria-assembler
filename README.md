@@ -1172,8 +1172,13 @@ rust/src/
 
 ## Tests
 
-202 Python tests and 18 Rust tests. All of them pass, on a fresh clone as well
-as here, which is not the same thing and was worth checking.
+202 Python tests and 18 Rust tests. All of them pass.
+
+Checked the way someone else would get them, not just here: a new environment
+built from `environment.yml`, a fresh clone, `maturin develop --release`, then
+both commands below. Same counts, and the simulated run came out the same too.
+Worth doing, because for a while eight of these tests passed here and failed for
+everyone else.
 
 ```bash
 pytest
